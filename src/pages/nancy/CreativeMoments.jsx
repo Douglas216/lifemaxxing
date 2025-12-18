@@ -132,7 +132,7 @@ const CreativeMoments = () => {
                 textAlign: 'center',
                 textShadow: '0 2px 5px rgba(190, 24, 93, 0.1)'
             }}>
-                Somebody is Creative...
+                Somebody is creative...
             </h1>
             <p style={{ color: '#db2777', fontSize: '1.2rem', marginBottom: '3rem', fontStyle: 'italic' }}>
                 It is of paramount importance that we capture the cutest moments of nancy.

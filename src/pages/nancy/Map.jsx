@@ -36,7 +36,7 @@ const Map = () => {
     const [locations, setLocations] = useState([]);
     const [isAddingMode, setIsAddingMode] = useState(false);
     const [tempCoords, setTempCoords] = useState(null); // Coords for new pin or editing pin
-    const [formData, setFormData] = useState({ city: '', country: '', date: '', notes: '', customEmoji: '' });
+    const [formData, setFormData] = useState({ city: '', country: '', date: '', time: '', notes: '', customEmoji: '' });
     const [editingId, setEditingId] = useState(null); // ID of location being edited
     const [deleteId, setDeleteId] = useState(null); // ID of location to confirm delete
     const [showEmojiPicker, setShowEmojiPicker] = useState(false); // Toggle for emoji picker
@@ -54,10 +54,25 @@ const Map = () => {
         return () => unsubscribe();
     }, [user]);
 
+    // Handle Escape Key to Cancel
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                setIsAddingMode(false);
+                setTempCoords(null);
+                setEditingId(null);
+                setDeleteId(null);
+                setShowEmojiPicker(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     const handleMapClick = (latlng) => {
         setTempCoords(latlng);
         setEditingId(null);
-        setFormData({ city: '', country: '', date: '', notes: '', customEmoji: '📍' });
+        setFormData({ city: '', country: '', date: '', time: '', notes: '', customEmoji: '📍' });
         setIsAddingMode(false);
         setShowEmojiPicker(false);
     };
@@ -68,6 +83,7 @@ const Map = () => {
             city: loc.city || '',
             country: loc.country || '',
             date: loc.date || '',
+            time: loc.time || '',
             notes: loc.notes || '',
             customEmoji: loc.customEmoji || '📍' // Default to pin if no emoji
         });
@@ -101,7 +117,7 @@ const Map = () => {
                 });
             }
             // Reset
-            setFormData({ city: '', country: '', date: '', notes: '', customEmoji: '' });
+            setFormData({ city: '', country: '', date: '', time: '', notes: '', customEmoji: '' });
             setTempCoords(null);
             setEditingId(null);
             setShowEmojiPicker(false);
@@ -139,12 +155,16 @@ const Map = () => {
             <MapContainer
                 center={[39.8283, -98.5795]} // Center of USA approx
                 zoom={4}
+                minZoom={3} // Prevent zooming out too far
+                maxBounds={[[-85, -180], [85, 180]]} // restrict view to the world (lat cut off at 85 to avoid weird projection issues)
+                maxBoundsViscosity={1.0} // "hard" edge
                 style={{ height: '100%', width: '100%', zIndex: 0 }}
                 scrollWheelZoom={true}
             >
                 <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    noWrap={true}
                 />
 
                 <LocationMarker isAdding={isAddingMode} onMapClick={handleMapClick} />
@@ -161,8 +181,12 @@ const Map = () => {
                                     {loc.customEmoji || '📍'}
                                 </div>
                                 <h3 style={{ margin: '0 0 5px 0', color: '#be185d' }}>{loc.city}</h3>
-                                {loc.date && <div style={{ fontSize: '0.8rem', color: '#999', margin: '5px 0' }}>{new Date(loc.date).toLocaleDateString()}</div>}
-                                {loc.notes && <p style={{ margin: '5px 0', fontStyle: 'italic' }}>"{loc.notes}"</p>}
+                                {loc.date && (
+                                    <div style={{ fontSize: '0.8rem', color: '#999', margin: '5px 0' }}>
+                                        {new Date(loc.date + 'T12:00:00').toLocaleDateString()} {loc.time && <span>at {loc.time}</span>}
+                                    </div>
+                                )}
+                                {loc.notes && <p style={{ margin: '5px 0', fontStyle: 'italic', textAlign: 'left' }}>{loc.notes}</p>}
                                 <div style={{ display: 'flex', gap: '5px', justifyContent: 'center', marginTop: '8px' }}>
                                     <button
                                         onClick={() => handleEdit(loc)}
@@ -334,12 +358,20 @@ const Map = () => {
                             <label style={{ fontSize: '0.85rem', color: '#666', marginLeft: '0.2rem' }}>
                                 Date <span style={{ fontWeight: 'normal', color: '#999' }}>(Optional - leave blank for permanent spots)</span>
                             </label>
-                            <input
-                                type="date"
-                                value={formData.date}
-                                onChange={e => setFormData({ ...formData, date: e.target.value })}
-                                style={{ padding: '0.8rem', borderRadius: '8px', border: '1px solid #ddd' }}
-                            />
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <input
+                                    type="date"
+                                    value={formData.date}
+                                    onChange={e => setFormData({ ...formData, date: e.target.value })}
+                                    style={{ flex: 2, padding: '0.8rem', borderRadius: '8px', border: '1px solid #ddd' }}
+                                />
+                                <input
+                                    type="time"
+                                    value={formData.time}
+                                    onChange={e => setFormData({ ...formData, time: e.target.value })}
+                                    style={{ flex: 1, padding: '0.8rem', borderRadius: '8px', border: '1px solid #ddd' }}
+                                />
+                            </div>
                         </div>
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -347,7 +379,7 @@ const Map = () => {
                                 What happened here?
                             </label>
                             <textarea
-                                placeholder="Tell the story..."
+                                placeholder="e.g. We had our first date here!"
                                 value={formData.notes}
                                 onChange={e => setFormData({ ...formData, notes: e.target.value })}
                                 style={{ padding: '0.8rem', borderRadius: '8px', border: '1px solid #ddd', minHeight: '80px' }}

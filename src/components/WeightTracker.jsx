@@ -45,6 +45,9 @@ const WeightTracker = () => {
     const [heightInput, setHeightInput] = useState('');
     const [heightUnit, setHeightUnit] = useState('cm'); // 'cm' or 'ft'
 
+    // Info Tooltip State
+    const [showInfo, setShowInfo] = useState(false);
+
     // Load Data
     useEffect(() => {
         if (!user) return;
@@ -247,8 +250,46 @@ const WeightTracker = () => {
     return (
         <div className="weight-tracker-card" style={{ position: 'relative' }}>
             <div className="weight-header">
-                <div className="weight-title-group" style={{ display: 'block', textAlign: 'left', marginRight: 'auto' }}>
-                    <h2 style={{ margin: 0, textAlign: 'left', display: 'block' }}>Weight Tracker</h2>
+                <div className="weight-title-group" style={{ display: 'block', textAlign: 'left', marginRight: 'auto', position: 'relative' }}>
+                    <h2 style={{ margin: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        Weight Tracker
+                        <span
+                            style={{ cursor: 'help', color: '#9ca3af', position: 'relative', display: 'flex', alignItems: 'center' }}
+                            onMouseEnter={() => setShowInfo(true)}
+                            onMouseLeave={() => setShowInfo(false)}
+                        >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+
+
+                            {showInfo && (
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '28px',
+                                    left: '-5px',
+                                    width: '280px',
+                                    backgroundColor: 'white',
+                                    padding: '16px',
+                                    borderRadius: '12px',
+                                    boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
+                                    border: '1px solid #f3f4f6',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 'normal',
+                                    color: '#4b5563',
+                                    zIndex: 50,
+                                    lineHeight: '1.5',
+                                    textAlign: 'left'
+                                }}>
+                                    <div style={{ position: 'absolute', top: '-6px', left: '10px', width: '12px', height: '12px', background: 'white', transform: 'rotate(45deg)', borderLeft: '1px solid #f3f4f6', borderTop: '1px solid #f3f4f6' }}></div>
+                                    <strong style={{ display: 'block', marginBottom: '6px', color: '#111827', fontSize: '0.9rem' }}>Best practice:</strong>
+                                    For the most consistent results, weigh yourself in the morning after using the bathroom, before eating or drinking, and with minimal clothing.
+                                </div>
+                            )}
+                        </span>
+                    </h2>
                     <span className="weight-subtitle" style={{ textAlign: 'left', display: 'block', width: '100%', marginTop: '4px' }}>
                         Remember: Weight is only a number.
                     </span>
@@ -362,156 +403,160 @@ const WeightTracker = () => {
             </div>
 
             {/* Height Modal */}
-            {showHeightModal && (
-                <div style={{
-                    position: 'absolute',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(255,255,255,0.95)',
-                    backdropFilter: 'blur(4px)',
-                    zIndex: 10,
-                    borderRadius: '24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '2rem'
-                }}>
-                    <h3 style={{ marginTop: 0, color: '#1f2333' }}>Set Height</h3>
-                    <p style={{ marginBottom: '1.5rem', fontSize: '0.9rem', color: '#666', textAlign: 'center' }}>
-                        Used to calculate your BMI trend.
-                    </p>
-                    <form onSubmit={handleSaveHeight} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%', maxWidth: '240px' }}>
+            {
+                showHeightModal && (
+                    <div style={{
+                        position: 'absolute',
+                        top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(255,255,255,0.95)',
+                        backdropFilter: 'blur(4px)',
+                        zIndex: 10,
+                        borderRadius: '24px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '2rem'
+                    }}>
+                        <h3 style={{ marginTop: 0, color: '#1f2333' }}>Set Height</h3>
+                        <p style={{ marginBottom: '1.5rem', fontSize: '0.9rem', color: '#666', textAlign: 'center' }}>
+                            Used to calculate your BMI trend.
+                        </p>
+                        <form onSubmit={handleSaveHeight} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%', maxWidth: '240px' }}>
+                            <div className="weight-input-wrapper">
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    className="weight-input-field"
+                                    placeholder={heightUnit === 'cm' ? "e.g. 175" : "e.g. 5.9"}
+                                    value={heightInput}
+                                    onChange={(e) => setHeightInput(e.target.value)}
+                                    autoFocus
+                                />
+                                <div className="weight-unit-toggle">
+                                    <button
+                                        type="button"
+                                        className={`unit-btn ${heightUnit === 'cm' ? 'active' : ''}`}
+                                        onClick={() => setHeightUnit('cm')}
+                                    >
+                                        cm
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`unit-btn ${heightUnit === 'ft' ? 'active' : ''}`}
+                                        onClick={() => setHeightUnit('ft')}
+                                    >
+                                        ft
+                                    </button>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button type="button" className="weight-log-btn" style={{ background: '#f0f0f0', color: '#333', flex: 1 }} onClick={() => setShowHeightModal(false)}>Cancel</button>
+                                <button type="submit" className="weight-log-btn" style={{ flex: 1 }}>Save</button>
+                            </div>
+                        </form>
+                    </div>
+                )
+            }
+
+            {
+                todayEntry && !isEditingToday ? (
+                    <div className="weight-input-section" style={{ justifyContent: 'space-between', borderTop: 'none', alignItems: 'center' }}>
+                        <div style={{
+                            color: '#395aff',
+                            backgroundColor: 'rgba(57, 90, 255, 0.1)',
+                            padding: '0.8rem 1rem',
+                            borderRadius: '12px',
+                            flex: 1,
+                            marginRight: '1rem',
+                            fontSize: '0.95rem',
+                            fontWeight: '500',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}>
+                            Weight logged today: <strong>&nbsp;{currentWeightDisplay}</strong>
+                        </div>
+                        <button
+                            className="weight-log-btn"
+                            style={{ background: 'transparent', color: '#395aff', border: '1px solid rgba(57, 90, 255, 0.3)', padding: '0 1rem' }}
+                            onClick={() => {
+                                setWeightInput(unit === 'kg' ? todayEntry.weightKg.toString() : (todayEntry.weightKg * 2.20462).toFixed(1));
+                                setIsEditingToday(true);
+                            }}
+                        >
+                            Edit
+                        </button>
+                    </div>
+                ) : (
+                    <form className="weight-input-section" onSubmit={handleLogWeight}>
                         <div className="weight-input-wrapper">
                             <input
                                 type="number"
-                                step="0.01"
+                                step="0.1"
                                 className="weight-input-field"
-                                placeholder={heightUnit === 'cm' ? "e.g. 175" : "e.g. 5.9"}
-                                value={heightInput}
-                                onChange={(e) => setHeightInput(e.target.value)}
-                                autoFocus
+                                placeholder="Log current weight..."
+                                value={weightInput}
+                                onChange={(e) => setWeightInput(e.target.value)}
+                                autoFocus={isEditingToday}
                             />
                             <div className="weight-unit-toggle">
                                 <button
                                     type="button"
-                                    className={`unit-btn ${heightUnit === 'cm' ? 'active' : ''}`}
-                                    onClick={() => setHeightUnit('cm')}
+                                    className={`unit-btn ${unit === 'kg' ? 'active' : ''}`}
+                                    onClick={() => {
+                                        if (unit !== 'kg') {
+                                            setUnit('kg');
+                                            if (weightInput) {
+                                                const lbs = parseFloat(weightInput);
+                                                if (!isNaN(lbs)) {
+                                                    setWeightInput((lbs * 0.453592).toFixed(1));
+                                                }
+                                            }
+                                        }
+                                    }}
                                 >
-                                    cm
+                                    kg
                                 </button>
                                 <button
                                     type="button"
-                                    className={`unit-btn ${heightUnit === 'ft' ? 'active' : ''}`}
-                                    onClick={() => setHeightUnit('ft')}
+                                    className={`unit-btn ${unit === 'lb' ? 'active' : ''}`}
+                                    onClick={() => {
+                                        if (unit !== 'lb') {
+                                            setUnit('lb');
+                                            if (weightInput) {
+                                                const kgs = parseFloat(weightInput);
+                                                if (!isNaN(kgs)) {
+                                                    setWeightInput((kgs * 2.20462).toFixed(1));
+                                                }
+                                            }
+                                        }
+                                    }}
                                 >
-                                    ft
+                                    lb
                                 </button>
                             </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                            <button type="button" className="weight-log-btn" style={{ background: '#f0f0f0', color: '#333', flex: 1 }} onClick={() => setShowHeightModal(false)}>Cancel</button>
-                            <button type="submit" className="weight-log-btn" style={{ flex: 1 }}>Save</button>
-                        </div>
-                    </form>
-                </div>
-            )}
-
-            {todayEntry && !isEditingToday ? (
-                <div className="weight-input-section" style={{ justifyContent: 'space-between', borderTop: 'none', alignItems: 'center' }}>
-                    <div style={{
-                        color: '#395aff',
-                        backgroundColor: 'rgba(57, 90, 255, 0.1)',
-                        padding: '0.8rem 1rem',
-                        borderRadius: '12px',
-                        flex: 1,
-                        marginRight: '1rem',
-                        fontSize: '0.95rem',
-                        fontWeight: '500',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
-                    }}>
-                        Weight logged today: <strong>&nbsp;{currentWeightDisplay}</strong>
-                    </div>
-                    <button
-                        className="weight-log-btn"
-                        style={{ background: 'transparent', color: '#395aff', border: '1px solid rgba(57, 90, 255, 0.3)', padding: '0 1rem' }}
-                        onClick={() => {
-                            setWeightInput(unit === 'kg' ? todayEntry.weightKg.toString() : (todayEntry.weightKg * 2.20462).toFixed(1));
-                            setIsEditingToday(true);
-                        }}
-                    >
-                        Edit
-                    </button>
-                </div>
-            ) : (
-                <form className="weight-input-section" onSubmit={handleLogWeight}>
-                    <div className="weight-input-wrapper">
-                        <input
-                            type="number"
-                            step="0.1"
-                            className="weight-input-field"
-                            placeholder="Log current weight..."
-                            value={weightInput}
-                            onChange={(e) => setWeightInput(e.target.value)}
-                            autoFocus={isEditingToday}
-                        />
-                        <div className="weight-unit-toggle">
-                            <button
-                                type="button"
-                                className={`unit-btn ${unit === 'kg' ? 'active' : ''}`}
-                                onClick={() => {
-                                    if (unit !== 'kg') {
-                                        setUnit('kg');
-                                        if (weightInput) {
-                                            const lbs = parseFloat(weightInput);
-                                            if (!isNaN(lbs)) {
-                                                setWeightInput((lbs * 0.453592).toFixed(1));
-                                            }
-                                        }
-                                    }
-                                }}
-                            >
-                                kg
-                            </button>
-                            <button
-                                type="button"
-                                className={`unit-btn ${unit === 'lb' ? 'active' : ''}`}
-                                onClick={() => {
-                                    if (unit !== 'lb') {
-                                        setUnit('lb');
-                                        if (weightInput) {
-                                            const kgs = parseFloat(weightInput);
-                                            if (!isNaN(kgs)) {
-                                                setWeightInput((kgs * 2.20462).toFixed(1));
-                                            }
-                                        }
-                                    }
-                                }}
-                            >
-                                lb
-                            </button>
-                        </div>
-                    </div>
-                    <button type="submit" className="weight-log-btn">
-                        {isEditingToday ? 'Update' : 'Log Entry'}
-                    </button>
-                    {isEditingToday && (
-                        <button
-                            type="button"
-                            className="weight-log-btn"
-                            style={{ marginLeft: '0.5rem', background: 'transparent', color: '#666', border: '1px solid #ccc', padding: '0 1rem' }}
-                            onClick={() => {
-                                setIsEditingToday(false);
-                                setWeightInput('');
-                            }}
-                        >
-                            Cancel
+                        <button type="submit" className="weight-log-btn">
+                            {isEditingToday ? 'Update' : 'Log Entry'}
                         </button>
-                    )}
-                </form>
-            )}
-        </div>
+                        {isEditingToday && (
+                            <button
+                                type="button"
+                                className="weight-log-btn"
+                                style={{ marginLeft: '0.5rem', background: 'transparent', color: '#666', border: '1px solid #ccc', padding: '0 1rem' }}
+                                onClick={() => {
+                                    setIsEditingToday(false);
+                                    setWeightInput('');
+                                }}
+                            >
+                                Cancel
+                            </button>
+                        )}
+                    </form>
+                )
+            }
+        </div >
     );
 };
 
