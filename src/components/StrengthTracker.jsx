@@ -43,11 +43,19 @@ const StrengthTracker = () => {
     const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [logLift, setLogLift] = useState(null); // 'bench', 'squat', 'deadlift'
     const [logWeight, setLogWeight] = useState('');
-    const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
+    const [logDate, setLogDate] = useState(() => {
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    });
 
     // Full History for History Modal
     const [fullHistory, setFullHistory] = useState([]);
+
     const [historyFilterLift, setHistoryFilterLift] = useState('ALL'); // 'ALL', 'bench', 'squat', 'deadlift'
+    const [deleteId, setDeleteId] = useState(null); // ID to confirm delete
 
     // Persist Unit
     useEffect(() => {
@@ -198,14 +206,20 @@ const StrengthTracker = () => {
     const openLogModal = (lift) => {
         setLogLift(lift);
         setLogWeight('');
-        setLogDate(new Date().toISOString().split('T')[0]); // Default to today
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        setLogDate(`${year}-${month}-${day}`); // Default to today (Local)
         setShowLogModal(true);
     };
 
-    const handleDeleteHistory = async (id) => {
-        if (!window.confirm("Delete this record?")) return;
+
+    const confirmDelete = async () => {
+        if (!deleteId) return;
         try {
-            await deleteDoc(doc(db, 'users', user.uid, 'strength_history', id));
+            await deleteDoc(doc(db, 'users', user.uid, 'strength_history', deleteId));
+            setDeleteId(null);
         } catch (e) {
             console.error("Delete failed", e);
         }
@@ -516,7 +530,12 @@ const StrengthTracker = () => {
                                                             ✏️
                                                         </button>
                                                         <button
-                                                            onClick={() => handleDeleteHistory(item.id)}
+                                                            title="Edit"
+                                                        >
+                                                            ✏️
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setDeleteId(item.id)}
                                                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}
                                                             title="Delete"
                                                         >
@@ -539,6 +558,20 @@ const StrengthTracker = () => {
                     </div>
                 )
             }
+
+            {/* DELETE CONFIRMATION MODAL */}
+            {deleteId && (
+                <div className="strength-modal-overlay" onClick={() => setDeleteId(null)}>
+                    <div className="strength-modal" style={{ maxWidth: '300px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                        <h3 style={{ marginTop: 0 }}>Delete Record?</h3>
+                        <p style={{ color: '#666', marginBottom: '1.5rem' }}>Are you sure you want to remove this PR entry?</p>
+                        <div className="strength-modal-actions">
+                            <button className="strength-modal-btn cancel" onClick={() => setDeleteId(null)}>Cancel</button>
+                            <button className="strength-modal-btn save" style={{ background: '#ef4444' }} onClick={confirmDelete}>Delete</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 };

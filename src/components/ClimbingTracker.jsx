@@ -25,6 +25,15 @@ import { db } from '../firebase';
 import './ClimbingTracker.css';
 
 const V_GRADES = ['VB', 'V0', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17'];
+const YDS_GRADES = [
+    '5.6', '5.7', '5.8', '5.9',
+    '5.10a', '5.10b', '5.10c', '5.10d',
+    '5.11a', '5.11b', '5.11c', '5.11d',
+    '5.12a', '5.12b', '5.12c', '5.12d',
+    '5.13a', '5.13b', '5.13c', '5.13d',
+    '5.14a', '5.14b', '5.14c', '5.14d',
+    '5.15a', '5.15b', '5.15c', '5.15d'
+];
 
 const getLocalToday = () => {
     const d = new Date();
@@ -38,6 +47,7 @@ const ClimbingTracker = () => {
     const { user } = useAuth();
     const [climbs, setClimbs] = useState([]);
     const [timeRange, setTimeRange] = useState('ALL'); // '1W', '1M', '1Y', 'ALL'
+    const [climbType, setClimbType] = useState('boulder'); // 'boulder', 'top_rope', 'lead'
     const [showLogModal, setShowLogModal] = useState(false);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
 
@@ -45,14 +55,36 @@ const ClimbingTracker = () => {
     const [selectedGrade, setSelectedGrade] = useState('V3');
     const [logDate, setLogDate] = useState(getLocalToday());
 
+    // Reset grade when type changes
+    useEffect(() => {
+        if (climbType === 'boulder') setSelectedGrade('V3');
+        else setSelectedGrade('5.10a');
+    }, [climbType]);
+
+    // Graph Color Helper
     // Graph Color Helper
     const getBarColor = (grade) => {
-        // Gradient from Green (easy) to Red/Purple (hard)
-        const index = V_GRADES.indexOf(grade);
-        if (index < 3) return '#4ade80'; // Easy
-        if (index < 6) return '#fbbf24'; // Moderate
-        if (index < 9) return '#f87171'; // Hard
-        return '#a855f7'; // Elite
+        if (climbType === 'boulder') {
+            const index = V_GRADES.indexOf(grade);
+            if (index < 3) return '#4ade80'; // Easy
+            if (index < 6) return '#fbbf24'; // Moderate
+            if (index < 9) return '#f87171'; // Hard
+            return '#a855f7'; // Elite
+        } else {
+            // YDS Logic
+            // YDS Logic
+            // 5.6 - 5.9: Easy
+            if (grade.startsWith('5.6') || grade.startsWith('5.7') || grade.startsWith('5.8') || grade.startsWith('5.9')) return '#4ade80';
+
+            // 5.10 - 5.11: Moderate
+            if (grade.startsWith('5.10') || grade.startsWith('5.11')) return '#fbbf24';
+
+            // 5.12 - 5.13: Hard
+            if (grade.startsWith('5.12') || grade.startsWith('5.13')) return '#f87171';
+
+            // 5.14+: Elite
+            return '#a855f7';
+        }
     };
 
     // Fetch History
@@ -84,12 +116,20 @@ const ClimbingTracker = () => {
         if (timeRange === '1M') cutoff = now - 30 * 24 * 60 * 60 * 1000;
         if (timeRange === '1Y') cutoff = now - 365 * 24 * 60 * 60 * 1000;
 
+        const currentGrades = climbType === 'boulder' ? V_GRADES : YDS_GRADES;
+        // For YDS, only show 5.5+ on graph as requested (Now starts at 5.6 by default)
+        const displayGrades = climbType === 'boulder' ? V_GRADES : YDS_GRADES;
+
         // Filter
-        const filtered = climbs.filter(c => c.timestamp >= cutoff);
+        const filtered = climbs.filter(c => {
+            // Backwards compatibility: if type is missing, it's boulder
+            const cType = c.type || 'boulder';
+            return cType === climbType && c.timestamp >= cutoff;
+        });
 
         // Aggregate
         const counts = {};
-        V_GRADES.forEach(g => counts[g] = 0); // Initialize all grades to 0
+        currentGrades.forEach(g => counts[g] = 0);
 
         filtered.forEach(c => {
             if (counts[c.grade] !== undefined) {
@@ -97,12 +137,18 @@ const ClimbingTracker = () => {
             }
         });
 
-        // Convert to array
-        return V_GRADES.map(grade => ({
+        // Convert to array (Use displayGrades for X-Axis structure)
+        return displayGrades.map(grade => ({
             grade,
-            count: counts[grade]
+            count: counts[grade] || 0
         })).filter(d => d.count > 0 || timeRange === 'ALL');
-    }, [climbs, timeRange]);
+    }, [climbs, timeRange, climbType]);
+
+    const cycleClimbType = () => {
+        if (climbType === 'boulder') setClimbType('top_rope');
+        else if (climbType === 'top_rope') setClimbType('lead');
+        else setClimbType('boulder');
+    };
 
     const handleLogClimb = async () => {
         if (!user) return;
@@ -113,6 +159,7 @@ const ClimbingTracker = () => {
             const dateObj = new Date(y, m - 1, d, 12, 0, 0, 0);
 
             await addDoc(collection(db, 'users', user.uid, 'climbing_history'), {
+                type: climbType,
                 grade: selectedGrade,
                 date: dateObj,
                 createdAt: serverTimestamp()
@@ -142,6 +189,18 @@ const ClimbingTracker = () => {
                     <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#1f2333' }}>Climbing Tracker</h2>
                     <span className="climb-subtitle">The only way is up.</span>
                 </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                        className="climb-type-toggle-btn"
+                        onClick={cycleClimbType}
+                        title="Click to switch climbing discipline"
+                    >
+                        {climbType === 'boulder' ? 'Bouldering' : climbType === 'top_rope' ? 'Top Rope' : 'Lead'}
+                    </button>
+                    {/* Add small visual indicator arrows if desired, or keep simple */}
+                </div>
+
                 <button
                     className="climb-history-btn-top"
                     onClick={() => setShowHistoryModal(true)}
@@ -160,7 +219,9 @@ const ClimbingTracker = () => {
                             axisLine={{ stroke: '#eee' }}
                             tick={{ fontSize: 10, fill: '#666' }}
                             interval={timeRange === 'ALL' ? 'preserveStartEnd' : 0}
-                            ticks={timeRange === 'ALL' ? ['VB', 'V1', 'V3', 'V5', 'V7', 'V9', 'V11', 'V13', 'V15', 'V17'] : undefined}
+                            ticks={timeRange === 'ALL' ? (climbType === 'boulder'
+                                ? ['VB', 'V1', 'V3', 'V5', 'V7', 'V9', 'V11', 'V13', 'V15', 'V17']
+                                : ['5.6', '5.8', '5.10a', '5.11a', '5.12a', '5.13a', '5.14a', '5.15a', '5.15d']) : undefined}
                         />
                         <YAxis
                             allowDecimals={false}
@@ -210,7 +271,7 @@ const ClimbingTracker = () => {
                         <div className="form-group">
                             <label>Grade</label>
                             <div className="grade-grid">
-                                {V_GRADES.map(g => (
+                                {(climbType === 'boulder' ? V_GRADES : YDS_GRADES).map(g => (
                                     <button
                                         key={g}
                                         className={`grade-select-btn ${selectedGrade === g ? 'selected' : ''}`}
@@ -259,7 +320,7 @@ const ClimbingTracker = () => {
                             {climbs.length === 0 ? (
                                 <p className="empty-message">No climbs logged yet. Go send some rocks!</p>
                             ) : (
-                                climbs.map(climb => (
+                                climbs.filter(c => (c.type || 'boulder') === climbType).map(climb => (
                                     <div key={climb.id} className="history-item">
                                         <div className="history-info">
                                             <span
