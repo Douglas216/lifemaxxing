@@ -14,6 +14,8 @@ import {
 } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase';
+import completionSound from '../assets/main-timer-completion.mp3';
+import addTaskSound from '../assets/task-added.mp3';
 import './Wishlist.css';
 
 const DEFAULT_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -298,6 +300,12 @@ const Wishlist = () => {
     setTasks(nextTasks);
     setNewTask('');
     persistTasks(nextTasks);
+
+    try {
+      new Audio(addTaskSound).play();
+    } catch (error) {
+      console.error('Error playing add task sound:', error);
+    }
   };
 
   // Rollover Logic
@@ -365,9 +373,20 @@ const Wishlist = () => {
   };
 
   const handleToggleTask = async (taskId) => {
-    const nextTasks = tasks.map((task) =>
-      task.id === taskId ? { ...task, completed: !task.completed } : task
-    );
+    const nextTasks = tasks.map((task) => {
+      if (task.id === taskId) {
+        const isNowCompleted = !task.completed;
+        if (isNowCompleted) {
+          try {
+            new Audio(completionSound).play();
+          } catch (error) {
+            console.error('Error playing completion sound:', error);
+          }
+        }
+        return { ...task, completed: isNowCompleted };
+      }
+      return task;
+    });
     setTasks(nextTasks);
     persistTasks(nextTasks);
   };
