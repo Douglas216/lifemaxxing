@@ -32,3 +32,7 @@ When you are sitting on any other seat, you can do whatever you like – but onc
 3. 
 
 $I = \int_{0}^{\infty} V(\tau) \cdot W(\tau)d\tau$
+
+## Environment Notes
+
+- `REACT_APP_GOOGLE_MAPS_API_KEY` (optional): enables gym autocomplete in the Climbing Tracker log modal. Logging still works without it.

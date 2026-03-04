@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
     collection,
@@ -8,7 +8,8 @@ import {
     addDoc,
     serverTimestamp,
     deleteDoc,
-    doc
+    doc,
+    writeBatch
 } from 'firebase/firestore';
 import {
     ResponsiveContainer,
@@ -45,6 +46,104 @@ const getLocalToday = () => {
     return `${year}-${month}-${day}`;
 };
 
+const getDefaultGradeByType = (type) => {
+    if (type === 'boulder') return 'V3';
+    if (type === 'speed') return '';
+    return '5.10a';
+};
+
+const getGradesForType = (type) => {
+    if (type === 'boulder') return V_GRADES;
+    if (type === 'speed') return [];
+    return YDS_GRADES;
+};
+
+const createBulkCounts = (type) => {
+    return getGradesForType(type).reduce((acc, grade) => {
+        acc[grade] = '';
+        return acc;
+    }, {});
+};
+
+const createSessionId = () => {
+    if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+    }
+    return `session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const BATCH_CHUNK_SIZE = 450;
+const GOOGLE_PLACES_SCRIPT_ID = 'google-places-maps-script';
+const GOOGLE_PLACES_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
+
+let googlePlacesScriptPromise = null;
+
+const getPreferredCountryCode = () => {
+    if (typeof navigator === 'undefined') return 'us';
+    const locale = navigator.language || navigator.languages?.[0] || '';
+    const match = locale.match(/-([A-Za-z]{2})$/);
+    return (match?.[1] || 'us').toLowerCase();
+};
+
+const loadGooglePlacesScript = (apiKey) => {
+    if (typeof window === 'undefined') {
+        return Promise.reject(new Error('Window unavailable'));
+    }
+
+    if (window.google?.maps?.places) {
+        return Promise.resolve();
+    }
+
+    if (!apiKey) {
+        return Promise.reject(new Error('Missing Google Maps API key'));
+    }
+
+    if (googlePlacesScriptPromise) {
+        return googlePlacesScriptPromise;
+    }
+
+    googlePlacesScriptPromise = new Promise((resolve, reject) => {
+        const existingScript = document.getElementById(GOOGLE_PLACES_SCRIPT_ID);
+        if (existingScript) {
+            existingScript.addEventListener('load', () => resolve(), { once: true });
+            existingScript.addEventListener('error', () => {
+                googlePlacesScriptPromise = null;
+                reject(new Error('Failed to load Google Places script'));
+            }, { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.id = GOOGLE_PLACES_SCRIPT_ID;
+        script.async = true;
+        script.defer = true;
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places`;
+        script.onload = () => resolve();
+        script.onerror = () => {
+            googlePlacesScriptPromise = null;
+            reject(new Error('Failed to load Google Places script'));
+        };
+        document.head.appendChild(script);
+    });
+
+    return googlePlacesScriptPromise;
+};
+
+const getBarColorByType = (type, grade) => {
+    if (type === 'boulder') {
+        const index = V_GRADES.indexOf(grade);
+        if (index < 3) return '#4ade80';
+        if (index < 6) return '#fbbf24';
+        if (index < 9) return '#f87171';
+        return '#a855f7';
+    }
+
+    if (grade.startsWith('5.6') || grade.startsWith('5.7') || grade.startsWith('5.8') || grade.startsWith('5.9')) return '#4ade80';
+    if (grade.startsWith('5.10') || grade.startsWith('5.11')) return '#fbbf24';
+    if (grade.startsWith('5.12') || grade.startsWith('5.13')) return '#f87171';
+    return '#a855f7';
+};
+
 const ClimbingTracker = () => {
     const { user } = useAuth();
     const [climbs, setClimbs] = useState([]);
@@ -55,42 +154,192 @@ const ClimbingTracker = () => {
     const [showInfo, setShowInfo] = useState(false); // Info tooltip state
 
     // Form State
-    const [selectedGrade, setSelectedGrade] = useState('V3');
+    const [selectedGrade, setSelectedGrade] = useState(() => getDefaultGradeByType('boulder'));
     const [logDate, setLogDate] = useState(getLocalToday());
     const [logTime, setLogTime] = useState(''); // For Speed Climbing (seconds)
+    const [logMode, setLogMode] = useState('single'); // 'single' | 'session'
+    const [bulkCounts, setBulkCounts] = useState(() => createBulkCounts('boulder'));
+    const [gymQuery, setGymQuery] = useState('');
+    const [gymSuggestions, setGymSuggestions] = useState([]);
+    const [selectedGym, setSelectedGym] = useState(null);
+    const [gymLoading, setGymLoading] = useState(false);
+    const [gymError, setGymError] = useState('');
+    const [placesReady, setPlacesReady] = useState(false);
+    const [placesLoading, setPlacesLoading] = useState(false);
+    const autocompleteServiceRef = useRef(null);
+    const placesServiceRef = useRef(null);
+    const placesContainerRef = useRef(null);
+    const gymSearchRequestRef = useRef(0);
+    const countryCodeRef = useRef(getPreferredCountryCode());
+
+    const resetGymState = () => {
+        setGymQuery('');
+        setGymSuggestions([]);
+        setSelectedGym(null);
+        setGymLoading(false);
+        setGymError('');
+    };
 
     // Reset grade when type changes
     useEffect(() => {
-        if (climbType === 'boulder') setSelectedGrade('V3');
-        else if (climbType === 'speed') setSelectedGrade(''); // No grade for speed
-        else setSelectedGrade('5.10a');
+        setSelectedGrade(getDefaultGradeByType(climbType));
+        setBulkCounts(createBulkCounts(climbType));
+        if (climbType === 'speed') setLogMode('single');
     }, [climbType]);
 
-    // Graph Color Helper
-    // Graph Color Helper
-    const getBarColor = (grade) => {
-        if (climbType === 'boulder') {
-            const index = V_GRADES.indexOf(grade);
-            if (index < 3) return '#4ade80'; // Easy
-            if (index < 6) return '#fbbf24'; // Moderate
-            if (index < 9) return '#f87171'; // Hard
-            return '#a855f7'; // Elite
-        } else {
-            // YDS Logic
-            // YDS Logic
-            // 5.6 - 5.9: Easy
-            if (grade.startsWith('5.6') || grade.startsWith('5.7') || grade.startsWith('5.8') || grade.startsWith('5.9')) return '#4ade80';
+    useEffect(() => {
+        if (!showLogModal) return;
 
-            // 5.10 - 5.11: Moderate
-            if (grade.startsWith('5.10') || grade.startsWith('5.11')) return '#fbbf24';
-
-            // 5.12 - 5.13: Hard
-            if (grade.startsWith('5.12') || grade.startsWith('5.13')) return '#f87171';
-
-            // 5.14+: Elite
-            return '#a855f7';
+        if (!GOOGLE_PLACES_API_KEY) {
+            setPlacesReady(false);
+            setPlacesLoading(false);
+            setGymSuggestions([]);
+            setGymError('Gym search unavailable: add REACT_APP_GOOGLE_MAPS_API_KEY to enable Google Places.');
+            return;
         }
-    };
+
+        let isActive = true;
+        setPlacesLoading(true);
+
+        loadGooglePlacesScript(GOOGLE_PLACES_API_KEY)
+            .then(() => {
+                if (!isActive) return;
+                if (!window.google?.maps?.places) {
+                    setPlacesReady(false);
+                    setGymError('Gym search is unavailable right now. You can still save without a gym.');
+                    return;
+                }
+
+                if (!placesContainerRef.current) {
+                    const container = document.createElement('div');
+                    container.style.display = 'none';
+                    document.body.appendChild(container);
+                    placesContainerRef.current = container;
+                }
+
+                autocompleteServiceRef.current = new window.google.maps.places.AutocompleteService();
+                placesServiceRef.current = new window.google.maps.places.PlacesService(placesContainerRef.current);
+                setPlacesReady(true);
+                setGymError('');
+            })
+            .catch((error) => {
+                if (!isActive) return;
+                console.error('Google Places initialization failed:', error);
+                setPlacesReady(false);
+                setGymError('Gym search is unavailable right now. You can still save without a gym.');
+            })
+            .finally(() => {
+                if (isActive) setPlacesLoading(false);
+            });
+
+        return () => {
+            isActive = false;
+        };
+    }, [showLogModal]);
+
+    useEffect(() => {
+        if (!showLogModal || !placesReady || !autocompleteServiceRef.current) return;
+
+        const queryText = gymQuery.trim();
+        if (queryText.length < 2) {
+            setGymSuggestions([]);
+            setGymLoading(false);
+            return;
+        }
+
+        if (selectedGym && queryText === selectedGym.name) {
+            setGymSuggestions([]);
+            setGymLoading(false);
+            return;
+        }
+
+        const requestId = gymSearchRequestRef.current + 1;
+        gymSearchRequestRef.current = requestId;
+        setGymLoading(true);
+
+        const timeoutId = window.setTimeout(() => {
+            const placesStatus = window.google?.maps?.places?.PlacesServiceStatus;
+            if (!placesStatus) {
+                setGymLoading(false);
+                setGymSuggestions([]);
+                setGymError('Gym search is unavailable right now. You can still save without a gym.');
+                return;
+            }
+
+            const mapPredictions = (predictions) => (
+                predictions.slice(0, 6).map((prediction) => ({
+                    placeId: prediction.place_id,
+                    description: prediction.description,
+                    primaryText: prediction.structured_formatting?.main_text || prediction.description,
+                    secondaryText: prediction.structured_formatting?.secondary_text || ''
+                }))
+            );
+
+            const handlePredictionResult = (predictions, status, allowFallback) => {
+                if (gymSearchRequestRef.current !== requestId) return;
+
+                if (status === placesStatus.OK && predictions?.length) {
+                    setGymLoading(false);
+                    setGymError('');
+                    setGymSuggestions(mapPredictions(predictions));
+                    return;
+                }
+
+                if (status === placesStatus.ZERO_RESULTS && allowFallback) {
+                    autocompleteServiceRef.current.getPlacePredictions(
+                        {
+                            input: queryText,
+                            types: ['establishment']
+                        },
+                        (fallbackPredictions, fallbackStatus) => handlePredictionResult(fallbackPredictions, fallbackStatus, false)
+                    );
+                    return;
+                }
+
+                setGymLoading(false);
+                if (status === placesStatus.ZERO_RESULTS) {
+                    setGymSuggestions([]);
+                    setGymError('');
+                    return;
+                }
+
+                setGymSuggestions([]);
+                setGymError('Could not load gym suggestions. You can still save without a gym.');
+            };
+
+            autocompleteServiceRef.current.getPlacePredictions(
+                {
+                    input: queryText,
+                    types: ['establishment'],
+                    componentRestrictions: { country: countryCodeRef.current }
+                },
+                (predictions, status) => handlePredictionResult(predictions, status, true)
+            );
+        }, 180);
+
+        return () => {
+            clearTimeout(timeoutId);
+        };
+    }, [gymQuery, placesReady, selectedGym, showLogModal]);
+
+    useEffect(() => {
+        return () => {
+            if (placesContainerRef.current?.parentNode) {
+                placesContainerRef.current.parentNode.removeChild(placesContainerRef.current);
+            }
+        };
+    }, []);
+
+    const totalBulkClimbs = React.useMemo(() => {
+        return Object.values(bulkCounts).reduce((sum, value) => {
+            const parsed = Number.parseInt(value, 10);
+            return sum + (Number.isFinite(parsed) ? parsed : 0);
+        }, 0);
+    }, [bulkCounts]);
+
+    // Graph Color Helper
+    // Graph Color Helper
+    const getBarColor = (grade) => getBarColorByType(climbType, grade);
 
     // Fetch History
     useEffect(() => {
@@ -170,39 +419,197 @@ const ClimbingTracker = () => {
         else setClimbType('boulder');
     };
 
+    const openLogModal = () => {
+        setLogMode('single');
+        setSelectedGrade(getDefaultGradeByType(climbType));
+        setLogTime('');
+        setLogDate(getLocalToday());
+        setBulkCounts(createBulkCounts(climbType));
+        resetGymState();
+        setShowLogModal(true);
+    };
+
+    const closeLogModal = () => {
+        setShowLogModal(false);
+        setLogMode('single');
+        setSelectedGrade(getDefaultGradeByType(climbType));
+        setLogTime('');
+        setLogDate(getLocalToday());
+        setBulkCounts(createBulkCounts(climbType));
+        resetGymState();
+    };
+
+    const handleSelectGymSuggestion = (suggestion) => {
+        if (!suggestion?.placeId || !placesServiceRef.current || !window.google?.maps?.places) {
+            setSelectedGym({
+                placeId: suggestion?.placeId || '',
+                name: suggestion?.primaryText || suggestion?.description || gymQuery.trim(),
+                address: suggestion?.secondaryText || '',
+                lat: null,
+                lng: null
+            });
+            setGymQuery(suggestion?.primaryText || suggestion?.description || gymQuery.trim());
+            setGymSuggestions([]);
+            return;
+        }
+
+        setGymLoading(true);
+        placesServiceRef.current.getDetails(
+            {
+                placeId: suggestion.placeId,
+                fields: ['place_id', 'name', 'formatted_address', 'geometry.location']
+            },
+            (place, status) => {
+                setGymLoading(false);
+                const placesStatus = window.google?.maps?.places?.PlacesServiceStatus;
+                if (status !== placesStatus?.OK || !place) {
+                    setSelectedGym({
+                        placeId: suggestion.placeId,
+                        name: suggestion.primaryText || suggestion.description,
+                        address: suggestion.secondaryText || '',
+                        lat: null,
+                        lng: null
+                    });
+                    setGymQuery(suggestion.primaryText || suggestion.description);
+                    setGymSuggestions([]);
+                    setGymError('Gym details were partially unavailable. Name will still be saved.');
+                    return;
+                }
+
+                const rawLat = place.geometry?.location?.lat?.();
+                const rawLng = place.geometry?.location?.lng?.();
+                setSelectedGym({
+                    placeId: place.place_id || suggestion.placeId,
+                    name: place.name || suggestion.primaryText || suggestion.description,
+                    address: place.formatted_address || suggestion.secondaryText || '',
+                    lat: Number.isFinite(rawLat) ? rawLat : null,
+                    lng: Number.isFinite(rawLng) ? rawLng : null
+                });
+                setGymQuery(place.name || suggestion.primaryText || suggestion.description);
+                setGymSuggestions([]);
+                setGymError('');
+            }
+        );
+    };
+
+    const clearSelectedGym = () => {
+        setSelectedGym(null);
+        setGymQuery('');
+        setGymSuggestions([]);
+        setGymError('');
+    };
+
+    const updateBulkCount = (grade, rawValue) => {
+        if (rawValue === '') {
+            setBulkCounts(prev => ({ ...prev, [grade]: '' }));
+            return;
+        }
+        if (!/^\d+$/.test(rawValue)) return;
+
+        const parsed = Math.max(0, Number.parseInt(rawValue, 10));
+        setBulkCounts(prev => ({ ...prev, [grade]: String(parsed) }));
+    };
+
     const handleLogClimb = async () => {
         if (!user) return;
         try {
             // Create a proper date object from the input string (YYYY-MM-DD)
             // We set time to noon to avoid timezone rolling issues
             const [y, m, d] = logDate.split('-').map(Number);
+            if (!y || !m || !d) return;
             const dateObj = new Date(y, m - 1, d, 12, 0, 0, 0);
+            const dateKey = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const historyRef = collection(db, 'users', user.uid, 'climbing_history');
+            const gymPayload = {};
+            if (selectedGym) {
+                if (selectedGym.placeId) gymPayload.gymPlaceId = selectedGym.placeId;
+                if (selectedGym.name) gymPayload.gymName = selectedGym.name;
+                if (selectedGym.address) gymPayload.gymAddress = selectedGym.address;
+                if (Number.isFinite(selectedGym.lat)) gymPayload.gymLat = selectedGym.lat;
+                if (Number.isFinite(selectedGym.lng)) gymPayload.gymLng = selectedGym.lng;
+                gymPayload.gymSource = 'google_places';
+            }
 
-            await addDoc(collection(db, 'users', user.uid, 'climbing_history'), {
-                type: climbType,
-                grade: climbType === 'speed' ? null : selectedGrade,
-                time: climbType === 'speed' ? parseFloat(logTime) : null,
-                date: dateObj,
-                createdAt: serverTimestamp()
-            });
-            setShowLogModal(false);
-            // Reset to defaults
-            setSelectedGrade('V3');
-            setLogTime('');
-            setLogDate(getLocalToday());
+            if (logMode === 'single' || climbType === 'speed') {
+                const parsedTime = Number.parseFloat(logTime);
+                if (climbType === 'speed' && (!Number.isFinite(parsedTime) || parsedTime <= 0)) return;
+
+                await addDoc(historyRef, {
+                    type: climbType,
+                    grade: climbType === 'speed' ? null : selectedGrade,
+                    time: climbType === 'speed' ? parsedTime : null,
+                    date: dateObj,
+                    createdAt: serverTimestamp(),
+                    sessionId: createSessionId(),
+                    entryMode: 'single',
+                    dateKey,
+                    ...gymPayload
+                });
+            } else {
+                const grades = getGradesForType(climbType);
+                const entries = [];
+
+                grades.forEach((grade) => {
+                    const parsed = Number.parseInt(bulkCounts[grade], 10);
+                    const count = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+                    for (let i = 0; i < count; i += 1) {
+                        entries.push(grade);
+                    }
+                });
+
+                if (entries.length === 0) return;
+
+                const sessionId = createSessionId();
+                for (let start = 0; start < entries.length; start += BATCH_CHUNK_SIZE) {
+                    const batch = writeBatch(db);
+                    const chunk = entries.slice(start, start + BATCH_CHUNK_SIZE);
+
+                    chunk.forEach((grade) => {
+                        const ref = doc(historyRef);
+                        batch.set(ref, {
+                            type: climbType,
+                            grade,
+                            time: null,
+                            date: dateObj,
+                            createdAt: serverTimestamp(),
+                            sessionId,
+                            entryMode: 'session',
+                            dateKey,
+                            ...gymPayload
+                        });
+                    });
+
+                    await batch.commit();
+                }
+            }
+
+            closeLogModal();
         } catch (error) {
             console.error("Error logging climb:", error);
         }
     };
 
-    const handleDelete = async (id) => {
-        if (!window.confirm("Delete this log?")) return;
+    const historyRows = React.useMemo(() => {
+        return climbs.filter((climb) => (climb.type || 'boulder') === climbType);
+    }, [climbs, climbType]);
+
+    const handleDeleteLog = async (id) => {
+        if (!user || !id) return;
+        if (!window.confirm('Delete this log?')) return;
         try {
             await deleteDoc(doc(db, 'users', user.uid, 'climbing_history', id));
         } catch (err) {
             console.error(err);
         }
-    }
+    };
+
+    const parsedSpeedTime = Number.parseFloat(logTime);
+    const canSaveSingle = climbType === 'speed'
+        ? Number.isFinite(parsedSpeedTime) && parsedSpeedTime > 0
+        : Boolean(selectedGrade);
+    const canSave = logMode === 'session' && climbType !== 'speed'
+        ? totalBulkClimbs > 0
+        : canSaveSingle;
 
     return (
         <div className="climbing-tracker-container">
@@ -402,7 +809,7 @@ const ClimbingTracker = () => {
             </div>
 
             <div className="climb-actions-bottom">
-                <button className="log-climb-btn full-width" onClick={() => setShowLogModal(true)}>
+                <button className="log-climb-btn full-width" onClick={openLogModal}>
                     + Log Climb
                 </button>
             </div>
@@ -410,55 +817,197 @@ const ClimbingTracker = () => {
             {/* LOG MODAL */}
             {
                 showLogModal && createPortal(
-                    <div className="climb-modal-overlay" onClick={() => setShowLogModal(false)}>
-                        <div className="climb-modal" onClick={e => e.stopPropagation()}>
+                    <div className="climb-modal-overlay" onClick={closeLogModal}>
+                        <div className="climb-modal climb-log-modal" onClick={e => e.stopPropagation()}>
                             <h3>Log Sent Climb</h3>
+                            <div className="climb-log-modal-content">
+                                <div className="climb-log-mode-tabs">
+                                    <button
+                                        type="button"
+                                        className={`climb-log-mode-tab ${logMode === 'single' ? 'active' : ''}`}
+                                        onClick={() => setLogMode('single')}
+                                    >
+                                        Single
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`climb-log-mode-tab ${logMode === 'session' ? 'active' : ''}`}
+                                        onClick={() => setLogMode('session')}
+                                        disabled={climbType === 'speed'}
+                                    >
+                                        Session
+                                    </button>
+                                </div>
 
-                            <div className="form-group">
-                                <label>{climbType === 'speed' ? 'Time (seconds)' : 'Grade'}</label>
-                                {climbType === 'speed' ? (
+                                {climbType === 'speed' && (
+                                    <p className="climb-log-mode-note">
+                                        Session bulk logging is not available for Speed yet.
+                                    </p>
+                                )}
+
+                                <div className="form-group">
+                                    <label>Date Sent</label>
                                     <input
-                                        type="number"
-                                        placeholder="e.g. 15.4"
-                                        value={logTime}
-                                        onChange={(e) => setLogTime(e.target.value)}
-                                        className="climb-date-input" // Reuse style class for consistency
-                                        autoFocus
-                                        step="0.01"
+                                        type="date"
+                                        value={logDate}
+                                        onChange={(e) => setLogDate(e.target.value)}
+                                        className="climb-date-input"
                                     />
-                                ) : (
-                                    <div className="grade-grid">
-                                        {(climbType === 'boulder' ? V_GRADES : YDS_GRADES).map(g => (
+                                </div>
+
+                                <div className="form-group">
+                                    <label>Gym (optional)</label>
+                                    <div className="gym-search-field">
+                                        <input
+                                            type="text"
+                                            value={gymQuery}
+                                            onChange={(e) => {
+                                                const nextValue = e.target.value;
+                                                setGymQuery(nextValue);
+                                                setGymError('');
+                                                if (selectedGym && nextValue !== selectedGym.name) {
+                                                    setSelectedGym(null);
+                                                }
+                                            }}
+                                            placeholder={
+                                                placesReady
+                                                    ? 'Search climbing gym...'
+                                                    : 'Gym search unavailable (optional)'
+                                            }
+                                            className="climb-date-input gym-search-input"
+                                            autoComplete="off"
+                                        />
+                                        {selectedGym && (
                                             <button
-                                                key={g}
-                                                className={`grade-select-btn ${selectedGrade === g ? 'selected' : ''}`}
-                                                onClick={() => setSelectedGrade(g)}
-                                                style={{
-                                                    borderColor: selectedGrade === g ? getBarColor(g) : 'transparent',
-                                                    backgroundColor: selectedGrade === g ? `${getBarColor(g)}20` : '#f5f5f5',
-                                                    color: selectedGrade === g ? getBarColor(g) : '#333'
-                                                }}
+                                                type="button"
+                                                className="gym-clear-btn"
+                                                onClick={clearSelectedGym}
                                             >
-                                                {g}
+                                                Clear
                                             </button>
-                                        ))}
+                                        )}
+                                    </div>
+
+                                    {gymLoading && <div className="gym-helper-text">Searching gyms...</div>}
+
+                                    {placesReady && gymSuggestions.length > 0 && (
+                                        <div className="gym-suggestions" role="listbox">
+                                            {gymSuggestions.map((suggestion) => (
+                                                <button
+                                                    type="button"
+                                                    key={suggestion.placeId}
+                                                    className="gym-suggestion-btn"
+                                                    onClick={() => handleSelectGymSuggestion(suggestion)}
+                                                >
+                                                    <span className="gym-suggestion-primary">{suggestion.primaryText}</span>
+                                                    {suggestion.secondaryText && (
+                                                        <span className="gym-suggestion-secondary">{suggestion.secondaryText}</span>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {selectedGym && (
+                                        <div className="selected-gym-chip">
+                                            <span className="selected-gym-name">{selectedGym.name}</span>
+                                            {selectedGym.address && (
+                                                <span className="selected-gym-address">{selectedGym.address}</span>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {placesLoading && !gymLoading && (
+                                        <div className="gym-helper-text">Loading gym search...</div>
+                                    )}
+
+                                    {gymError && (
+                                        <div className="gym-helper-text error">{gymError}</div>
+                                    )}
+                                </div>
+
+                                {(logMode === 'single' || climbType === 'speed') ? (
+                                    <div className="form-group">
+                                        <label>{climbType === 'speed' ? 'Time (seconds)' : 'Grade'}</label>
+                                        {climbType === 'speed' ? (
+                                            <input
+                                                type="number"
+                                                placeholder="e.g. 15.4"
+                                                value={logTime}
+                                                onChange={(e) => setLogTime(e.target.value)}
+                                                className="climb-date-input"
+                                                autoFocus
+                                                step="0.01"
+                                                min="0"
+                                            />
+                                        ) : (
+                                            <div className="grade-grid">
+                                                {getGradesForType(climbType).map(g => (
+                                                    <button
+                                                        key={g}
+                                                        className={`grade-select-btn ${selectedGrade === g ? 'selected' : ''}`}
+                                                        onClick={() => setSelectedGrade(g)}
+                                                        style={{
+                                                            borderColor: selectedGrade === g ? getBarColor(g) : 'transparent',
+                                                            backgroundColor: selectedGrade === g ? `${getBarColor(g)}20` : '#f5f5f5',
+                                                            color: selectedGrade === g ? getBarColor(g) : '#333'
+                                                        }}
+                                                    >
+                                                        {g}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="form-group session-form-group">
+                                        <label>Climbs by Grade</label>
+                                        <div className="session-grade-grid-scroll">
+                                            <div className="session-grade-grid">
+                                                {getGradesForType(climbType).map((grade) => (
+                                                    <label
+                                                        className="session-grade-row"
+                                                        key={grade}
+                                                        style={{
+                                                            borderColor: `${getBarColor(grade)}33`,
+                                                            backgroundColor: `${getBarColor(grade)}10`
+                                                        }}
+                                                    >
+                                                        <span
+                                                            className="session-grade-label"
+                                                            style={{
+                                                                color: getBarColor(grade),
+                                                                backgroundColor: `${getBarColor(grade)}1a`
+                                                            }}
+                                                        >
+                                                            {grade}
+                                                        </span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="1"
+                                                            inputMode="numeric"
+                                                            className="session-count-input"
+                                                            value={bulkCounts[grade] ?? ''}
+                                                            onChange={(e) => updateBulkCount(grade, e.target.value)}
+                                                            placeholder="0"
+                                                        />
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="session-summary">
+                                            Total climbs: <strong>{totalBulkClimbs}</strong>
+                                        </div>
                                     </div>
                                 )}
                             </div>
 
-                            <div className="form-group">
-                                <label>Date Sent</label>
-                                <input
-                                    type="date"
-                                    value={logDate}
-                                    onChange={(e) => setLogDate(e.target.value)}
-                                    className="climb-date-input"
-                                />
-                            </div>
-
                             <div className="modal-actions">
-                                <button className="cancel-btn" onClick={() => setShowLogModal(false)}>Cancel</button>
-                                <button className="save-btn" onClick={handleLogClimb}>Log It!</button>
+                                <button className="cancel-btn" onClick={closeLogModal}>Cancel</button>
+                                <button className="save-btn" onClick={handleLogClimb} disabled={!canSave}>
+                                    {logMode === 'session' && climbType !== 'speed' ? 'Save Session' : 'Log It!'}
+                                </button>
                             </div>
                         </div>
                     </div>,
@@ -477,10 +1026,10 @@ const ClimbingTracker = () => {
                             </div>
 
                             <div className="history-list">
-                                {climbs.length === 0 ? (
+                                {historyRows.length === 0 ? (
                                     <p className="empty-message">No climbs logged yet. Go send some rocks!</p>
                                 ) : (
-                                    climbs.filter(c => (c.type || 'boulder') === climbType).map(climb => (
+                                    historyRows.map(climb => (
                                         <div key={climb.id} className="history-item">
                                             <div className="history-info">
                                                 <span
@@ -492,8 +1041,11 @@ const ClimbingTracker = () => {
                                                 <span className="history-date">
                                                     {new Date(climb.timestamp).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
                                                 </span>
+                                                <span className={`history-gym ${climb.gymName ? '' : 'empty'}`}>
+                                                    {climb.gymName || 'No gym'}
+                                                </span>
                                             </div>
-                                            <button className="delete-log-btn" onClick={() => handleDelete(climb.id)}>
+                                            <button className="delete-log-btn" onClick={() => handleDeleteLog(climb.id)}>
                                                 Delete
                                             </button>
                                         </div>
