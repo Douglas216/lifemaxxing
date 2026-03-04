@@ -17,6 +17,7 @@ export const TASK_CATEGORY_OPTIONS = [
   { value: 'coding', label: 'Coding' },
   { value: 'meditation', label: 'Meditation' },
   { value: 'exercise', label: 'Exercise' },
+  { value: 'chores', label: 'Chores' },
   { value: 'custom', label: 'Custom' }
 ];
 
