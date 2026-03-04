@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
     onSnapshot,
-    serverTimestamp,
     collection,
     query,
     where,
     setDoc,
-    doc
+    doc,
+    deleteDoc,
+    orderBy
 } from 'firebase/firestore';
 import {
     ResponsiveContainer,
@@ -27,7 +28,7 @@ import DeadliftIcon from '../assets/deadlift.svg.svg';
 const StrengthTracker = () => {
     const { user } = useAuth();
     // const [loading, setLoading] = useState(true);
-    const [unit, setUnit] = useState('kg'); // 'kg' or 'lb'
+    const [unit, setUnit] = useState(() => localStorage.getItem('strength_unit') || 'kg'); // 'kg' or 'lb'
     const [timeRange, setTimeRange] = useState('ALL'); // '1W', '1M', '1Y', 'ALL'
     const [rmType, setRmType] = useState('1rm'); // '1rm', '5rm', '10rm', '20rm'
 
@@ -39,8 +40,27 @@ const StrengthTracker = () => {
 
     // Modal State
     const [showLogModal, setShowLogModal] = useState(false);
+    const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [logLift, setLogLift] = useState(null); // 'bench', 'squat', 'deadlift'
     const [logWeight, setLogWeight] = useState('');
+    const [logDate, setLogDate] = useState(() => {
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    });
+
+    // Full History for History Modal
+    const [fullHistory, setFullHistory] = useState([]);
+
+    const [historyFilterLift, setHistoryFilterLift] = useState('ALL'); // 'ALL', 'bench', 'squat', 'deadlift'
+    const [deleteId, setDeleteId] = useState(null); // ID to confirm delete
+
+    // Persist Unit
+    useEffect(() => {
+        localStorage.setItem('strength_unit', unit);
+    }, [unit]);
 
     // Fetch History for current RM Type
     useEffect(() => {
@@ -98,7 +118,37 @@ const StrengthTracker = () => {
         });
 
         return () => unsub();
+
     }, [user, rmType]);
+
+    // Fetch Full History when History Modal is Open
+    useEffect(() => {
+        if (!user || !showHistoryModal) return;
+
+        const historyRef = collection(db, 'users', user.uid, 'strength_history');
+        const q = query(
+            historyRef,
+            where('rmType', '==', rmType),
+            orderBy('date', 'desc')
+        );
+
+        const unsub = onSnapshot(q, (snapshot) => {
+            const data = snapshot.docs.map(doc => {
+                const d = doc.data();
+                return {
+                    id: doc.id,
+                    ...d,
+                    // Safe date conversion
+                    dateObj: d.date?.toDate ? d.date.toDate() : new Date(),
+                    formattedDate: d.date?.toDate
+                        ? d.date.toDate().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+                        : 'N/A'
+                };
+            });
+            setFullHistory(data);
+        });
+        return () => unsub();
+    }, [user, showHistoryModal, rmType]);
 
     // Filtered Data for Graphs based on timeRange
     const getFilteredHistory = (data) => {
@@ -127,11 +177,13 @@ const StrengthTracker = () => {
 
         try {
             // Generate ID for today: lift_rmType_YYYY-MM-DD
-            const today = new Date();
-            const year = today.getFullYear();
-            const month = String(today.getMonth() + 1).padStart(2, '0');
-            const day = String(today.getDate()).padStart(2, '0');
-            const dateKey = `${year}-${month}-${day}`;
+            // Use logDate 
+            const [y, m, d] = logDate.split('-');
+            const sentDate = new Date(y, m - 1, d);
+            // Ensure we set the time to noon to avoid timezone rolling issues with simple dates
+            sentDate.setHours(12, 0, 0, 0);
+
+            const dateKey = `${y}-${m}-${d}`;
             const docId = `${logLift}_${rmType}_${dateKey}`;
 
             // Use setDoc to overwrite if exists (enforces 1 per day)
@@ -139,7 +191,7 @@ const StrengthTracker = () => {
                 lift: logLift,
                 rmType: rmType,
                 weight: valKg,
-                date: serverTimestamp(), // Store server time, but ID enforces date
+                date: sentDate, // Use the selected date
                 dateKey: dateKey // Helpful for debugging/querying
             });
 
@@ -154,6 +206,40 @@ const StrengthTracker = () => {
     const openLogModal = (lift) => {
         setLogLift(lift);
         setLogWeight('');
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        setLogDate(`${year}-${month}-${day}`); // Default to today (Local)
+        setShowLogModal(true);
+    };
+
+
+    const confirmDelete = async () => {
+        if (!deleteId) return;
+        try {
+            await deleteDoc(doc(db, 'users', user.uid, 'strength_history', deleteId));
+            setDeleteId(null);
+        } catch (e) {
+            console.error("Delete failed", e);
+        }
+    };
+
+    const handleEditHistory = (item) => {
+        // Pre-fill log modal
+        setRmType(item.rmType);
+        setLogLift(item.lift);
+        setLogWeight(unit === 'kg' ? item.weight : Math.round(item.weight * 2.20462 * 10) / 10);
+
+        // Convert item date to YYYY-MM-DD for input
+        if (item.dateObj) {
+            const year = item.dateObj.getFullYear();
+            const month = String(item.dateObj.getMonth() + 1).padStart(2, '0');
+            const day = String(item.dateObj.getDate()).padStart(2, '0');
+            setLogDate(`${year}-${month}-${day}`);
+        }
+
+        setShowHistoryModal(false); // Close history to show editor
         setShowLogModal(true);
     };
 
@@ -175,30 +261,26 @@ const StrengthTracker = () => {
             <div className="top-bar">
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-                        <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>Strength Tracker</h2>
+                        <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>PR Tracker</h2>
                     </div>
                     <div style={{ fontSize: '0.9rem', color: 'rgba(31, 35, 51, 0.6)', marginTop: '0.25rem' }}>
                         It's what you do in the dark that puts you in the light.
                     </div>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                    <div className="time-range-controls">
-                        {['1W', '1M', '1Y', 'ALL'].map(range => (
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <div className="rm-controls" style={{ display: 'flex', gap: '0.5rem' }}>
+                        {['1rm', '5rm', '10rm', '20rm'].map(rm => (
                             <button
-                                key={range}
-                                className={`time-range-btn ${timeRange === range ? 'active' : ''}`}
-                                onClick={() => setTimeRange(range)}
+                                key={rm}
+                                className={`rm-toggle-btn ${rmType === rm ? 'active' : ''}`}
+                                onClick={() => setRmType(rm)}
                             >
-                                {range}
+                                {rm.toUpperCase()}
                             </button>
                         ))}
                     </div>
-
-                    <button
-                        className="unit-toggle-btn"
-                        onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
-                    >
-                        Unit: {unit.toUpperCase()}
+                    <button className="history-btn" onClick={() => setShowHistoryModal(true)}>
+                        Show History
                     </button>
                 </div>
             </div>
@@ -281,16 +363,25 @@ const StrengthTracker = () => {
                 })}
             </div >
 
-            <div className="strength-tracker-controls">
-                {['1rm', '5rm', '10rm', '20rm'].map(rm => (
-                    <button
-                        key={rm}
-                        className={`rm-toggle-btn ${rmType === rm ? 'active' : ''}`}
-                        onClick={() => setRmType(rm)}
-                    >
-                        {rm.toUpperCase()}
-                    </button>
-                ))}
+            <div className="strength-tracker-controls" style={{ position: 'relative' }}>
+                <div className="time-range-controls">
+                    {['1W', '1M', '1Y', 'ALL'].map(range => (
+                        <button
+                            key={range}
+                            className={`time-range-btn ${timeRange === range ? 'active' : ''}`}
+                            onClick={() => setTimeRange(range)}
+                        >
+                            {range}
+                        </button>
+                    ))}
+                </div>
+                <button
+                    className="unit-toggle-btn"
+                    onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
+                    style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)' }}
+                >
+                    Unit: {unit.toUpperCase()}
+                </button>
             </div>
 
             <div className="strength-tracker-total">
@@ -309,6 +400,15 @@ const StrengthTracker = () => {
                             </div>
 
                             <div className="lift-input-group">
+                                <label style={{ fontSize: '0.8rem', color: '#666', fontWeight: 600 }}>Date</label>
+                                <input
+                                    type="date"
+                                    className="lift-input"
+                                    style={{ fontSize: '1rem', padding: '0.5rem' }}
+                                    value={logDate}
+                                    onChange={e => setLogDate(e.target.value)}
+                                />
+                                <label style={{ fontSize: '0.8rem', color: '#666', fontWeight: 600, marginTop: '0.5rem' }}>Weight ({unit})</label>
                                 <input
                                     type="number"
                                     className="lift-input"
@@ -327,6 +427,151 @@ const StrengthTracker = () => {
                     </div>
                 )
             }
+
+            {/* HISTORY MODAL */}
+            {
+                showHistoryModal && (
+                    <div className="strength-modal-overlay" onClick={() => setShowHistoryModal(false)}>
+                        <div className="strength-modal"
+                            style={{ maxWidth: '600px', maxHeight: '80vh', overflowY: 'hidden', padding: '1.5rem' }}
+                            onClick={e => e.stopPropagation()}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                <h3 style={{ margin: 0 }}>{rmType.toUpperCase()} History Log</h3>
+                                <button onClick={() => setShowHistoryModal(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>✖</button>
+                            </div>
+
+                            {/* Lift Filter */}
+                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+                                <button
+                                    onClick={() => setHistoryFilterLift('ALL')}
+                                    style={{
+                                        padding: '0.4rem 0.8rem',
+                                        borderRadius: '20px',
+                                        border: historyFilterLift === 'ALL' ? 'none' : '1px solid #ddd',
+                                        background: historyFilterLift === 'ALL' ? '#1f2333' : 'white',
+                                        color: historyFilterLift === 'ALL' ? 'white' : '#666',
+                                        cursor: 'pointer',
+                                        fontSize: '0.85rem',
+                                        fontWeight: 600,
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    All Lifts
+                                </button>
+                                {LIFT_CONFIG.map(lift => (
+                                    <button
+                                        key={lift.key}
+                                        onClick={() => setHistoryFilterLift(lift.key)}
+                                        style={{
+                                            padding: '0.4rem 0.8rem',
+                                            borderRadius: '20px',
+                                            border: historyFilterLift === lift.key ? 'none' : '1px solid #ddd',
+                                            background: historyFilterLift === lift.key ? '#395aff' : 'white',
+                                            color: historyFilterLift === lift.key ? 'white' : '#666',
+                                            cursor: 'pointer',
+                                            fontSize: '0.85rem',
+                                            fontWeight: 600,
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                    >
+                                        {lift.label}
+                                    </button>
+                                ))}
+                                <div style={{ marginLeft: 'auto' }}>
+                                    <button
+                                        onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
+                                        style={{
+                                            padding: '0.4rem 0.8rem',
+                                            borderRadius: '20px',
+                                            border: '1px solid #ddd',
+                                            background: '#f9fafc',
+                                            color: '#666',
+                                            cursor: 'pointer',
+                                            fontSize: '0.85rem',
+                                            fontWeight: 600,
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                    >
+                                        Unit: {unit.toUpperCase()}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div style={{ overflowY: 'auto', flex: 1 }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '2px solid #eee', textAlign: 'left', color: '#888' }}>
+                                            <th style={{ padding: '0.5rem' }}>Date</th>
+                                            <th style={{ padding: '0.5rem' }}>Lift</th>
+                                            <th style={{ padding: '0.5rem' }}>Weight</th>
+                                            <th style={{ padding: '0.5rem', textAlign: 'right' }}>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {fullHistory
+                                            .filter(item => historyFilterLift === 'ALL' || item.lift === historyFilterLift)
+                                            .map(item => (
+                                                <tr key={item.id} style={{ borderBottom: '1px solid #f5f5f5' }}>
+                                                    <td style={{ padding: '0.8rem 0.5rem', color: '#555' }}>
+                                                        {item.formattedDate}
+                                                    </td>
+                                                    <td style={{ padding: '0.8rem 0.5rem', fontWeight: 600 }}>
+                                                        {LIFT_CONFIG.find(l => l.key === item.lift)?.label || item.lift}
+                                                    </td>
+                                                    <td style={{ padding: '0.8rem 0.5rem', fontWeight: 700, color: '#395aff' }}>
+                                                        {convert(item.weight)} {unit}
+                                                    </td>
+                                                    <td style={{ padding: '0.8rem 0.5rem', textAlign: 'right' }}>
+                                                        <button
+                                                            onClick={() => handleEditHistory(item)}
+                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', marginRight: '0.5rem', color: '#666' }}
+                                                            title="Edit"
+                                                        >
+                                                            ✏️
+                                                        </button>
+                                                        <button
+                                                            title="Edit"
+                                                        >
+                                                            ✏️
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setDeleteId(item.id)}
+                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}
+                                                            title="Delete"
+                                                        >
+                                                            🗑️
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        {fullHistory.filter(item => historyFilterLift === 'ALL' || item.lift === historyFilterLift).length === 0 && (
+                                            <tr>
+                                                <td colSpan="4" style={{ textAlign: 'center', padding: '2rem', color: '#aaa' }}>
+                                                    No history found.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* DELETE CONFIRMATION MODAL */}
+            {deleteId && (
+                <div className="strength-modal-overlay" onClick={() => setDeleteId(null)}>
+                    <div className="strength-modal" style={{ maxWidth: '300px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                        <h3 style={{ marginTop: 0 }}>Delete Record?</h3>
+                        <p style={{ color: '#666', marginBottom: '1.5rem' }}>Are you sure you want to remove this PR entry?</p>
+                        <div className="strength-modal-actions">
+                            <button className="strength-modal-btn cancel" onClick={() => setDeleteId(null)}>Cancel</button>
+                            <button className="strength-modal-btn save" style={{ background: '#ef4444' }} onClick={confirmDelete}>Delete</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 };

@@ -329,3 +329,24 @@
     margin-top: 2rem;
     font-style: italic;
 }
+
+/* Type Tabs */
+/* Type Toggle Button */
+.climb-type-toggle-btn {
+    background: transparent;
+    border: 2px solid #1f2333;
+    color: #1f2333;
+    padding: 0.35rem 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 100px;
+    text-align: center;
+}
+
+.climb-type-toggle-btn:hover {
+    background: #1f2333;
+    color: white;
+}

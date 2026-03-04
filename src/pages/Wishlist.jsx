@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import {
   addDoc,
   collection,
@@ -14,6 +14,8 @@ import {
 } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase';
+import completionSound from '../assets/main-timer-completion.mp3';
+import addTaskSound from '../assets/task-added.mp3';
 import './Wishlist.css';
 
 const DEFAULT_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -53,8 +55,28 @@ const createId = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random()}`;
 
+const QUADRANTS = [
+  { value: 'urgent-important', label: 'Urgent + Important' },
+  { value: 'not-urgent-important', label: 'Not Urgent + Important' },
+  { value: 'urgent-not-important', label: 'Urgent + Not Important' },
+  { value: 'not-urgent-not-important', label: 'Not Urgent + Not Important' },
+];
+
+const QUADRANT_LABELS = QUADRANTS.reduce((acc, quadrant) => {
+  acc[quadrant.value] = quadrant.label;
+  return acc;
+}, {});
+
+const QUADRANT_SORT_ORDER = [
+  'urgent-important',
+  'not-urgent-important',
+  'urgent-not-important',
+  'not-urgent-not-important',
+];
+
 const Wishlist = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [directions, setDirections] = useState([]);
   const [newDirection, setNewDirection] = useState('');
   const [addingDirection, setAddingDirection] = useState(false);
@@ -64,12 +86,19 @@ const Wishlist = () => {
   const [tasks, setTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [tasksError, setTasksError] = useState('');
-  const [newTask, setNewTask] = useState('');
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [taskQuadrant, setTaskQuadrant] = useState('');
+  const [taskEstimateMinutes, setTaskEstimateMinutes] = useState('');
+  const [taskDraft, setTaskDraft] = useState('');
+  const [editingTaskId, setEditingTaskId] = useState(null);
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState('');
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [timeZone, setTimeZone] = useState(DEFAULT_TIME_ZONE);
+  const [taskSortBy, setTaskSortBy] = useState('time');
+  const [taskSortDir, setTaskSortDir] = useState('desc');
+  const [selectedHistoryEntry, setSelectedHistoryEntry] = useState(null);
 
   const todayKey = useMemo(() => formatDateKey(new Date(), timeZone), [timeZone]);
 
@@ -223,6 +252,7 @@ const Wishlist = () => {
             return {
               id: docSnap.id,
               date: dateValue,
+              tasks: taskList,
               percent,
               completedCount,
               totalCount,
@@ -280,23 +310,87 @@ const Wishlist = () => {
     }
   };
 
-  const handleAddTask = async (event) => {
-    event.preventDefault();
-    if (!newTask.trim()) {
+  const handleAddTask = async ({ text, quadrant, estimateMinutes }) => {
+    if (!text.trim()) {
       return;
     }
     const nextTasks = [
       ...tasks,
       {
         id: createId(),
-        text: newTask.trim(),
+        text: text.trim(),
+        quadrant,
+        estimateMinutes,
         completed: false,
         createdAt: new Date().toISOString(),
       },
     ];
     setTasks(nextTasks);
-    setNewTask('');
     persistTasks(nextTasks);
+
+    try {
+      new Audio(addTaskSound).play();
+    } catch (error) {
+      console.error('Error playing add task sound:', error);
+    }
+  };
+
+  const handleUpdateTask = async ({ id, text, quadrant, estimateMinutes }) => {
+    if (!text.trim() || !id) {
+      return;
+    }
+    const nextTasks = tasks.map((task) =>
+      task.id === id
+        ? {
+          ...task,
+          text: text.trim(),
+          quadrant,
+          estimateMinutes,
+        }
+        : task
+    );
+    setTasks(nextTasks);
+    persistTasks(nextTasks);
+  };
+
+  const handleSubmitTaskModal = (event) => {
+    event.preventDefault();
+    const trimmed = taskDraft.trim();
+    const minutes = Number(taskEstimateMinutes);
+    if (!trimmed || !taskQuadrant || !Number.isFinite(minutes) || minutes <= 0) {
+      return;
+    }
+    if (editingTaskId) {
+      handleUpdateTask({ id: editingTaskId, text: trimmed, quadrant: taskQuadrant, estimateMinutes: minutes });
+    } else {
+      handleAddTask({ text: trimmed, quadrant: taskQuadrant, estimateMinutes: minutes });
+    }
+    setTaskDraft('');
+    setTaskQuadrant('');
+    setTaskEstimateMinutes('');
+    setEditingTaskId(null);
+    setShowTaskModal(false);
+  };
+
+  const openTaskModal = ({ task } = {}) => {
+    if (task) {
+      setEditingTaskId(task.id);
+      setTaskDraft(task.text || '');
+      setTaskQuadrant(task.quadrant || '');
+      setTaskEstimateMinutes(
+        Number.isFinite(task.estimateMinutes) ? String(task.estimateMinutes) : ''
+      );
+    } else {
+      setEditingTaskId(null);
+      setTaskDraft('');
+      setTaskQuadrant('');
+      setTaskEstimateMinutes('');
+    }
+    setShowTaskModal(true);
+  };
+
+  const handleOpenHistoryTasks = (entry) => {
+    setSelectedHistoryEntry(entry);
   };
 
   // Rollover Logic
@@ -364,9 +458,20 @@ const Wishlist = () => {
   };
 
   const handleToggleTask = async (taskId) => {
-    const nextTasks = tasks.map((task) =>
-      task.id === taskId ? { ...task, completed: !task.completed } : task
-    );
+    const nextTasks = tasks.map((task) => {
+      if (task.id === taskId) {
+        const isNowCompleted = !task.completed;
+        if (isNowCompleted) {
+          try {
+            new Audio(completionSound).play();
+          } catch (error) {
+            console.error('Error playing completion sound:', error);
+          }
+        }
+        return { ...task, completed: isNowCompleted };
+      }
+      return task;
+    });
     setTasks(nextTasks);
     persistTasks(nextTasks);
   };
@@ -385,6 +490,41 @@ const Wishlist = () => {
     return Math.round((completed / tasks.length) * 100);
   }, [tasks]);
 
+  const sortedTasks = useMemo(() => {
+    const list = [...tasks];
+    if (taskSortBy === 'time') {
+      list.sort((a, b) => {
+        const aVal = Number.isFinite(a.estimateMinutes) ? a.estimateMinutes : 0;
+        const bVal = Number.isFinite(b.estimateMinutes) ? b.estimateMinutes : 0;
+        return taskSortDir === 'asc' ? aVal - bVal : bVal - aVal;
+      });
+      return list;
+    }
+    if (taskSortBy === 'completion') {
+      list.sort((a, b) => {
+        const aVal = a.completed ? 1 : 0;
+        const bVal = b.completed ? 1 : 0;
+        if (aVal !== bVal) {
+          return taskSortDir === 'asc' ? aVal - bVal : bVal - aVal;
+        }
+        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bTime - aTime;
+      });
+      return list;
+    }
+    const orderMap = QUADRANT_SORT_ORDER.reduce((acc, key, index) => {
+      acc[key] = index;
+      return acc;
+    }, {});
+    list.sort((a, b) => {
+      const aVal = orderMap[a.quadrant] ?? 999;
+      const bVal = orderMap[b.quadrant] ?? 999;
+      return taskSortDir === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+    return list;
+  }, [tasks, taskSortBy, taskSortDir]);
+
   const circleRadius = 70;
   const circumference = 2 * Math.PI * circleRadius;
   const progressOffset = circumference - (completionPercent / 100) * circumference;
@@ -396,9 +536,39 @@ const Wishlist = () => {
   return (
     <div className="wishlist-page">
       <section className="wishlist-section wishlist-section--directions">
-        <header>
+        <header style={{ position: 'relative', width: '100%', marginBottom: '1.5rem', textAlign: 'center' }}>
           <h1>Life Direction Keywords</h1>
-          <p>Capture the phrases that keep you grounded. They become part of your history.</p>
+          <p style={{ margin: '0.5rem auto 0' }}>Capture the phrases that keep you grounded. They become part of your history.</p>
+          <button
+            onClick={() => navigate('/life-advice')}
+            style={{
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              background: 'transparent',
+              border: '1px solid #e5e7eb',
+              padding: '0.4rem 0.8rem',
+              borderRadius: '999px',
+              color: '#6b7280',
+              fontSize: '0.85rem',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              fontWeight: 500,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.borderColor = '#1f2333';
+              e.currentTarget.style.color = '#1f2333';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.borderColor = '#e5e7eb';
+              e.currentTarget.style.color = '#6b7280';
+            }}
+          >
+            <span>📜</span> Elder's Wisdom
+          </button>
         </header>
         <form className="wishlist-direction-form" onSubmit={handleAddDirection}>
           <input
@@ -451,34 +621,71 @@ const Wishlist = () => {
             ))
           )}
         </div>
+
+
       </section>
 
       <section className="wishlist-section wishlist-section--tasks">
         <div className="wishlist-tasks-panel">
-          <header>
-            <h2>Today’s Tasks</h2>
+          <header className="wishlist-tasks-header">
+            <div className="wishlist-tasks-header-row">
+              <h2>Today’s Tasks</h2>
+              <div className="wishlist-task-sort">
+                <button
+                  type="button"
+                  className={`wishlist-sort-pill ${taskSortBy === 'time' ? 'active' : ''}`}
+                  onClick={() => setTaskSortBy('time')}
+                >
+                  Time
+                </button>
+                <button
+                  type="button"
+                  className={`wishlist-sort-pill ${taskSortBy === 'category' ? 'active' : ''}`}
+                  onClick={() => setTaskSortBy('category')}
+                >
+                  Category
+                </button>
+                <button
+                  type="button"
+                  className={`wishlist-sort-pill ${taskSortBy === 'completion' ? 'active' : ''}`}
+                  onClick={() => setTaskSortBy('completion')}
+                >
+                  Completion
+                </button>
+                <button
+                  type="button"
+                  className="wishlist-sort-direction"
+                  onClick={() => setTaskSortDir(taskSortDir === 'asc' ? 'desc' : 'asc')}
+                  title={taskSortDir === 'asc' ? 'Ascending' : 'Descending'}
+                >
+                  {taskSortDir === 'asc' ? '↑' : '↓'}
+                </button>
+              </div>
+            </div>
             <p>Plan concrete actions for {todayKey} and mark them as you go.</p>
           </header>
-          <form className="wishlist-task-form" onSubmit={handleAddTask}>
-            <input
-              type="text"
-              placeholder="Add a task for today"
-              value={newTask}
-              onChange={(event) => setNewTask(event.target.value)}
-            />
-            <button type="submit">Add Task</button>
-          </form>
+          <div className="wishlist-task-form">
+            <button
+              type="button"
+              className="wishlist-task-modal-trigger"
+              onClick={() => openTaskModal()}
+            >
+              Add Task
+            </button>
+          </div>
           {tasksError && <div className="wishlist-error">{tasksError}</div>}
           {tasksLoading ? (
             <div className="wishlist-loading">Loading tasks…</div>
           ) : (
             <ul className="wishlist-task-list">
-              {tasks.length === 0 ? (
+              {sortedTasks.length === 0 ? (
                 <li className="wishlist-empty">No tasks set for today.</li>
               ) : (
-                tasks.map((task) => {
+                sortedTasks.map((task) => {
                   const daysOld = getTaskAge(task.createdAt);
                   const isStale = !task.completed && daysOld > 0;
+                  const quadrantLabel = QUADRANT_LABELS[task.quadrant] || task.quadrant;
+                  const quadrantClass = QUADRANT_LABELS[task.quadrant] ? task.quadrant : '';
 
                   return (
                     <li
@@ -493,6 +700,9 @@ const Wishlist = () => {
                         />
                         <div className="wishlist-task-content">
                           <span>{task.text}</span>
+                          {task.estimateMinutes ? (
+                            <span className="wishlist-task-estimate">{task.estimateMinutes} min</span>
+                          ) : null}
                           {isStale && (
                             <span className="wishlist-task-age">
                               {daysOld} day{daysOld > 1 ? 's' : ''} old
@@ -500,16 +710,30 @@ const Wishlist = () => {
                           )}
                         </div>
                       </label>
-                      <span className="wishlist-task-status">
-                        {task.completed ? 'Completed' : 'Pending'}
-                      </span>
-                      <button
-                        className="wishlist-task-remove"
-                        onClick={() => handleRemoveTask(task.id)}
-                        title="Remove task"
-                      >
-                        ×
-                      </button>
+                      {task.quadrant && (
+                        <span className={`wishlist-task-quadrant-label${quadrantClass ? ` ${quadrantClass}` : ''}`}>
+                          {quadrantLabel}
+                        </span>
+                      )}
+                      <div className="wishlist-task-actions">
+                        <span className="wishlist-task-status">
+                          {task.completed ? 'Completed' : 'Pending'}
+                        </span>
+                        <button
+                          className="wishlist-task-edit"
+                          onClick={() => openTaskModal({ task })}
+                          title="Edit task"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="wishlist-task-remove"
+                          onClick={() => handleRemoveTask(task.id)}
+                          title="Remove task"
+                        >
+                          ×
+                        </button>
+                      </div>
                     </li>
                   );
                 })
@@ -568,6 +792,7 @@ const Wishlist = () => {
                   <li
                     key={entry.id}
                     className={`wishlist-history-item${entry.hasTasks ? '' : ' wishlist-history-item--empty'}`}
+                    onClick={() => handleOpenHistoryTasks(entry)}
                   >
                     <div className="wishlist-history-date">{formattedDate}</div>
                     <div className="wishlist-history-progress">
@@ -597,6 +822,126 @@ const Wishlist = () => {
           </>
         )}
       </section>
+
+      {showTaskModal && (
+        <div className="wishlist-modal-overlay" onClick={() => setShowTaskModal(false)}>
+          <div className="wishlist-modal" onClick={(e) => e.stopPropagation()}>
+            <header className="wishlist-modal-header">
+              <h3>{editingTaskId ? 'Edit Task' : 'Add Task'}</h3>
+            </header>
+            <form className="wishlist-modal-body" onSubmit={handleSubmitTaskModal}>
+              <label className="wishlist-modal-label">Task description</label>
+              <textarea
+                className="wishlist-modal-textarea"
+                placeholder="What do you want to accomplish?"
+                value={taskDraft}
+                onChange={(event) => setTaskDraft(event.target.value)}
+                rows={3}
+                autoFocus
+              />
+
+              <label className="wishlist-modal-label">Urgency & Importance</label>
+              <div className="wishlist-quadrant-grid">
+                {QUADRANTS.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    className={`wishlist-quadrant-tile ${item.value}${taskQuadrant === item.value ? ' active' : ''}`}
+                    onClick={() => setTaskQuadrant(item.value)}
+                  >
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <label className="wishlist-modal-label">Estimated time (minutes)</label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                className="wishlist-modal-input"
+                placeholder="e.g. 30"
+                value={taskEstimateMinutes}
+                onChange={(event) => setTaskEstimateMinutes(event.target.value)}
+              />
+
+              <div className="wishlist-modal-actions">
+                <button
+                  type="button"
+                  className="wishlist-modal-cancel"
+                  onClick={() => {
+                    setShowTaskModal(false);
+                    setEditingTaskId(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="wishlist-modal-submit"
+                  disabled={!taskDraft.trim() || !taskQuadrant || !taskEstimateMinutes}
+                >
+                  {editingTaskId ? 'Save Changes' : 'Add Task'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {selectedHistoryEntry && (
+        <div className="wishlist-modal-overlay" onClick={() => setSelectedHistoryEntry(null)}>
+          <div className="wishlist-modal wishlist-history-modal" onClick={(e) => e.stopPropagation()}>
+            <header className="wishlist-modal-header">
+              <h3>
+                Tasks completed on{' '}
+                {formatDisplayDate(
+                  selectedHistoryEntry.date || selectedHistoryEntry.id,
+                  selectedHistoryEntry.timeZone || DEFAULT_TIME_ZONE
+                )}
+              </h3>
+            </header>
+            <div className="wishlist-history-modal-body">
+              {(selectedHistoryEntry.tasks || []).filter((task) => task.completed).length ? (
+                <ul className="wishlist-history-task-list">
+                  {(selectedHistoryEntry.tasks || []).filter((task) => task.completed).map((task) => {
+                    const quadrantLabel = QUADRANT_LABELS[task.quadrant] || task.quadrant;
+                    const quadrantClass = QUADRANT_LABELS[task.quadrant] ? task.quadrant : '';
+                    return (
+                      <li
+                        key={task.id || `${task.text}-${task.createdAt || ''}`}
+                        className={`wishlist-history-task-item${task.completed ? ' completed' : ''}`}
+                      >
+                        <span className="wishlist-history-task-check">{task.completed ? 'Done' : 'Pending'}</span>
+                        <span className="wishlist-history-task-text">{task.text}</span>
+                        {task.quadrant && (
+                          <span className={`wishlist-task-quadrant-label${quadrantClass ? ` ${quadrantClass}` : ''}`}>
+                            {quadrantLabel}
+                          </span>
+                        )}
+                        {task.estimateMinutes ? (
+                          <span className="wishlist-task-estimate">{task.estimateMinutes} min</span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="wishlist-empty">No completed tasks for that day.</p>
+              )}
+              <div className="wishlist-modal-actions">
+                <button
+                  type="button"
+                  className="wishlist-modal-submit"
+                  onClick={() => setSelectedHistoryEntry(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

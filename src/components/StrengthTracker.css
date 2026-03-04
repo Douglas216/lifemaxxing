@@ -342,3 +342,20 @@
 .strength-modal-btn.save:hover {
     background: #2846e0;
 }
+
+.history-btn {
+    background: white;
+    border: 1px solid rgba(20, 24, 38, 0.15);
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #1f2333;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.history-btn:hover {
+    background: #f9fafc;
+    border-color: rgba(20, 24, 38, 0.3);
+}

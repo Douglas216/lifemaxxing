@@ -26,7 +26,9 @@ body,
 }
 
 .top-nav {
-  padding: 1.25rem 2rem;
+  padding: clamp(1.25rem, 3vh, 2rem) 2rem;
+  padding-top: max(1.5rem, env(safe-area-inset-top) + 1.5rem);
+  height: auto;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid rgba(20, 24, 38, 0.08);

@@ -1,0 +1,187 @@
+.life-advice-page {
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: clamp(2rem, 5vw, 4rem) 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.life-advice-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.life-advice-header h1 {
+    font-size: 2.5rem;
+    color: #1f2333;
+    margin-bottom: 0.5rem;
+}
+
+.life-advice-header p {
+    color: #666;
+    font-size: 1.1rem;
+}
+
+.life-advice-form-card {
+    background: #fff;
+    padding: 2rem;
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.life-advice-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.life-advice-input-group label {
+    font-weight: 600;
+    color: #444;
+    font-size: 0.9rem;
+}
+
+.life-advice-input {
+    padding: 1rem;
+    border-radius: 12px;
+    border: 1px solid #eee;
+    font-size: 1rem;
+    transition: all 0.2s;
+}
+
+.life-advice-input:focus {
+    outline: none;
+    border-color: #395aff;
+    box-shadow: 0 0 0 3px rgba(57, 90, 255, 0.1);
+}
+
+.life-advice-textarea {
+    min-height: 100px;
+    resize: vertical;
+}
+
+.life-advice-submit-btn {
+    background: #1f2333;
+    color: white;
+    padding: 1rem;
+    border-radius: 12px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 1rem;
+}
+
+.life-advice-submit-btn:hover {
+    background: #333;
+    transform: translateY(-1px);
+}
+
+.life-advice-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.life-advice-card {
+    background: #fff;
+    padding: 1.5rem;
+    border-radius: 16px;
+    border: 1px solid #f0f0f0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    position: relative;
+    transition: transform 0.2s;
+}
+
+.life-advice-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
+}
+
+.life-advice-quote {
+    font-size: 1.1rem;
+    line-height: 1.5;
+    color: #1f2333;
+    font-style: italic;
+    position: relative;
+    padding-top: 1.5rem;
+    /* Space for action buttons */
+}
+
+.life-advice-author {
+    align-self: flex-end;
+    font-weight: 600;
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.life-advice-date {
+    font-size: 0.75rem;
+    color: #aaa;
+    margin-top: auto;
+}
+
+.life-advice-actions {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    gap: 0.5rem;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 10;
+}
+
+.life-advice-card:hover .life-advice-actions {
+    opacity: 1;
+}
+
+.life-advice-action-btn {
+    background: #f5f5f5;
+    border: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #666;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.life-advice-action-btn:hover {
+    background: #e5e5e5;
+    color: #333;
+}
+
+.life-advice-action-btn.delete:hover {
+    background: #fee2e2;
+    color: #ef4444;
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #666;
+    text-decoration: none;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.back-link:hover {
+    color: #1f2333;
+}

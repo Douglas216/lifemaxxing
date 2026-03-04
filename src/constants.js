@@ -17,10 +17,12 @@ export const TASK_CATEGORY_OPTIONS = [
   { value: 'coding', label: 'Coding' },
   { value: 'meditation', label: 'Meditation' },
   { value: 'exercise', label: 'Exercise' },
+  { value: 'chores', label: 'Chores' },
   { value: 'custom', label: 'Custom' }
 ];
 
 // Authorized emails for Private Pages
 export const ADMIN_EMAILS = [
-  'douglasj216@outlook.com'
+  'douglasj216@outlook.com',
+  'wangxr1218@gmail.com'
 ];

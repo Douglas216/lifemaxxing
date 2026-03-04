@@ -356,7 +356,7 @@ const HydrationTracker = () => {
                 </div>
                 <div className="water-header-actions" style={{ gap: '0.5rem' }}>
                     <button className="goal-btn" onClick={() => { setNewGoal(waterGoal); setShowGoalInput(true); }}>
-                        Target: {waterGoal}ml
+                        Target: {waterGoal}mL
                     </button>
                     <button className="history-btn" onClick={() => setShowHistoryModal(true)}>
                         Show History
@@ -369,12 +369,15 @@ const HydrationTracker = () => {
                 <div className="goal-input-overlay" onClick={() => setShowGoalInput(false)}>
                     <div className="goal-input-card" onClick={e => e.stopPropagation()}>
                         <h3>Set Daily Goal</h3>
-                        <input
-                            type="number"
-                            value={newGoal}
-                            onChange={e => setNewGoal(e.target.value)}
-                            autoFocus
-                        />
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                            <input
+                                type="number"
+                                value={newGoal}
+                                onChange={e => setNewGoal(e.target.value)}
+                                autoFocus
+                            />
+                            <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#395aff' }}>mL</span>
+                        </div>
                         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
                             <button className="cancel-btn" onClick={() => setShowGoalInput(false)}>Cancel</button>
                             <button className="save-btn" onClick={saveGoal}>Save</button>
@@ -390,7 +393,7 @@ const HydrationTracker = () => {
                 <div className="water-html-chart-container">
                     {/* Y-Axis */}
                     <div className="water-y-axis">
-                        <span style={{ bottom: '100%' }}>{waterGoal}ml</span>
+                        <span style={{ bottom: '100%' }}>{waterGoal}mL</span>
                         <span style={{ bottom: '75%' }}>{Math.round(waterGoal * 0.75)}</span>
                         <span style={{ bottom: '50%' }}>{Math.round(waterGoal * 0.5)}</span>
                         <span style={{ bottom: '25%' }}>{Math.round(waterGoal * 0.25)}</span>
@@ -422,7 +425,7 @@ const HydrationTracker = () => {
                                     </div>
                                     <span className={`water-day-label ${isToday ? 'active-day' : ''}`}>{d.day}</span>
                                     {/* Removed redundant tag if we have axis, or keep it? User asked for axis. Tag is nice for exact value on today. Keeping it. */}
-                                    {isToday && <div className="today-val-tag">{d.raw}ml</div>}
+                                    {isToday && <div className="today-val-tag">{d.raw}mL</div>}
                                 </div>
                             );
                         })}
@@ -431,9 +434,9 @@ const HydrationTracker = () => {
 
                 {/* 3. Footer Actions */}
                 <div className="water-controls-footer">
-                    <button className="water-btn remove" onClick={() => updateWater(-250)}>- 250ml</button>
-                    <button className="water-btn" onClick={() => updateWater(250)}>+ 250ml</button>
-                    <button className="water-btn" onClick={() => updateWater(500)}>+ 500ml</button>
+                    <button className="water-btn remove" onClick={() => updateWater(-250)}>- 250mL</button>
+                    <button className="water-btn" onClick={() => updateWater(250)}>+ 250mL</button>
+                    <button className="water-btn" onClick={() => updateWater(500)}>+ 500mL</button>
                     <button className="water-btn" onClick={() => updateWater(1000)}>+ 1L</button>
                 </div>
             </div>
@@ -479,7 +482,7 @@ const HydrationTracker = () => {
                                         />
                                     </div>
                                     <div className="form-group">
-                                        <label>Amount (ml)</label>
+                                        <label>Amount (mL)</label>
                                         <input
                                             type="number"
                                             value={manualAmount}
@@ -507,7 +510,7 @@ const HydrationTracker = () => {
                                                         </div>
                                                     </div>
                                                     <div className="history-right">
-                                                        <span className="history-duration">{item.amount} ml</span>
+                                                        <span className="history-duration">{item.amount} mL</span>
                                                         <button className="icon-btn edit" onClick={() => handleEdit(item)}>✏️</button>
                                                         <button className="icon-btn delete" onClick={() => handleDelete(item.id)}>🗑️</button>
                                                     </div>
@@ -539,7 +542,7 @@ const HydrationTracker = () => {
                                                     {recentWeeks.map((week, index) => (
                                                         <div className="profile-heatmap__week" key={`week-${index}`}>
                                                             {week.map(day => (
-                                                                <span key={day.key} className={`profile-heatmap__day ${getLevelClass(day.count)}`} title={`${day.key}: ${day.count}ml`} />
+                                                                <span key={day.key} className={`profile-heatmap__day ${getLevelClass(day.count)}`} title={`${day.key}: ${day.count}mL`} />
                                                             ))}
                                                         </div>
                                                     ))}
@@ -585,7 +588,7 @@ const HydrationTracker = () => {
                                                     {yearData.weeks.map((week, index) => (
                                                         <div className="profile-heatmap__week" key={`week-${index}`}>
                                                             {week.map(day => (
-                                                                <span key={day.key} className={`profile-heatmap__day ${getLevelClass(day.count)}`} title={`${day.key}: ${day.count}ml`} />
+                                                                <span key={day.key} className={`profile-heatmap__day ${getLevelClass(day.count)}`} title={`${day.key}: ${day.count}mL`} />
                                                             ))}
                                                         </div>
                                                     ))}
