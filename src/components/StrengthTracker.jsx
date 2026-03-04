@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     onSnapshot,
     collection,
@@ -25,6 +25,37 @@ import BenchIcon from '../assets/bench_press.svg';
 import SquatIcon from '../assets/squat.svg';
 import DeadliftIcon from '../assets/deadlift.svg.svg';
 
+const LIFT_CONFIG = [
+    { key: 'bench', label: 'Bench Press', iconType: 'image', iconSrc: BenchIcon, iconAlt: 'Bench' },
+    { key: 'squat', label: 'Squat', iconType: 'image', iconSrc: SquatIcon, iconAlt: 'Squat' },
+    { key: 'deadlift', label: 'Deadlift', iconType: 'image', iconSrc: DeadliftIcon, iconAlt: 'Deadlift' },
+    { key: 'ohp', label: 'Barbell Overhead Press', iconType: 'emoji', emoji: '🏋️' },
+    { key: 'latPulldown', label: 'Lat Pulldown', iconType: 'emoji', emoji: '🦅' },
+    { key: 'weightedPullup', label: 'Weighted Pullups', iconType: 'emoji', emoji: '🎯' }
+];
+
+const LIFT_KEYS = LIFT_CONFIG.map(lift => lift.key);
+const PAGE_SIZE = 3;
+const SWIPE_THRESHOLD = 50;
+const TRACKPAD_SWIPE_THRESHOLD = 60;
+const TRACKPAD_SWIPE_COOLDOWN_MS = 280;
+const TRACKPAD_RESET_WINDOW_MS = 180;
+
+const createEmptyHistoryState = () => LIFT_KEYS.reduce((acc, key) => {
+    acc[key] = [];
+    return acc;
+}, {});
+
+const createEmptyDailyLookup = () => LIFT_KEYS.reduce((acc, key) => {
+    acc[key] = {};
+    return acc;
+}, {});
+
+const createEmptyMaxState = () => LIFT_KEYS.reduce((acc, key) => {
+    acc[key] = 0;
+    return acc;
+}, {});
+
 const StrengthTracker = () => {
     const { user } = useAuth();
     // const [loading, setLoading] = useState(true);
@@ -32,16 +63,16 @@ const StrengthTracker = () => {
     const [timeRange, setTimeRange] = useState('ALL'); // '1W', '1M', '1Y', 'ALL'
     const [rmType, setRmType] = useState('1rm'); // '1rm', '5rm', '10rm', '20rm'
 
-    // History Data for Graphs: { bench: [{date, weight}, ...], squat: [], ... }
-    const [historyData, setHistoryData] = useState({ bench: [], squat: [], deadlift: [] });
+    // History Data for Graphs keyed by lift key.
+    const [historyData, setHistoryData] = useState(() => createEmptyHistoryState());
 
     // Current Maxes (Cached or calculated from history)
-    const [maxes, setMaxes] = useState({ bench: 0, squat: 0, deadlift: 0 });
+    const [maxes, setMaxes] = useState(() => createEmptyMaxState());
 
     // Modal State
     const [showLogModal, setShowLogModal] = useState(false);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
-    const [logLift, setLogLift] = useState(null); // 'bench', 'squat', 'deadlift'
+    const [logLift, setLogLift] = useState(null); // lift key
     const [logWeight, setLogWeight] = useState('');
     const [logDate, setLogDate] = useState(() => {
         const d = new Date();
@@ -54,8 +85,14 @@ const StrengthTracker = () => {
     // Full History for History Modal
     const [fullHistory, setFullHistory] = useState([]);
 
-    const [historyFilterLift, setHistoryFilterLift] = useState('ALL'); // 'ALL', 'bench', 'squat', 'deadlift'
+    const [historyFilterLift, setHistoryFilterLift] = useState('ALL'); // 'ALL' or lift key
     const [deleteId, setDeleteId] = useState(null); // ID to confirm delete
+    const [currentPage, setCurrentPage] = useState(0);
+    const [touchStartX, setTouchStartX] = useState(null);
+    const [touchEndX, setTouchEndX] = useState(null);
+    const trackpadAccumRef = useRef(0);
+    const trackpadLastEventRef = useRef(0);
+    const trackpadCooldownRef = useRef(0);
 
     // Persist Unit
     useEffect(() => {
@@ -74,7 +111,7 @@ const StrengthTracker = () => {
 
         const unsub = onSnapshot(q, (snapshot) => {
             // Group by date to deduplicate multiple entries per day
-            const raw = { bench: {}, squat: {}, deadlift: {} };
+            const raw = createEmptyDailyLookup();
 
             snapshot.docs.forEach(doc => {
                 const d = doc.data();
@@ -101,7 +138,7 @@ const StrengthTracker = () => {
             });
 
             // Convert back to sorted arrays
-            const processed = { bench: [], squat: [], deadlift: [] };
+            const processed = createEmptyHistoryState();
             Object.keys(raw).forEach(lift => {
                 processed[lift] = Object.values(raw[lift]).sort((a, b) => a.timestamp - b.timestamp);
             });
@@ -109,11 +146,10 @@ const StrengthTracker = () => {
             setHistoryData(processed);
 
             // Calculate Maxes from history (All-time best for this RM)
-            const newMaxes = {
-                bench: Math.max(0, ...processed.bench.map(i => i.weight)),
-                squat: Math.max(0, ...processed.squat.map(i => i.weight)),
-                deadlift: Math.max(0, ...processed.deadlift.map(i => i.weight)),
-            };
+            const newMaxes = createEmptyMaxState();
+            LIFT_KEYS.forEach((lift) => {
+                newMaxes[lift] = Math.max(0, ...processed[lift].map(i => i.weight));
+            });
             setMaxes(newMaxes);
         });
 
@@ -251,11 +287,86 @@ const StrengthTracker = () => {
     const totalKg = (maxes.bench + maxes.squat + maxes.deadlift) || 0;
     const totalDisplay = convert(totalKg);
 
-    const LIFT_CONFIG = [
-        { key: 'bench', label: 'Bench Press', icon: <img src={BenchIcon} alt="Bench" style={{ width: '40px', height: '40px' }} /> },
-        { key: 'squat', label: 'Squat', icon: <img src={SquatIcon} alt="Squat" style={{ width: '40px', height: '40px' }} /> },
-        { key: 'deadlift', label: 'Deadlift', icon: <img src={DeadliftIcon} alt="Deadlift" style={{ width: '40px', height: '40px' }} /> }
-    ];
+    const cardPages = useMemo(() => {
+        const pages = [];
+        for (let i = 0; i < LIFT_CONFIG.length; i += PAGE_SIZE) {
+            pages.push(LIFT_CONFIG.slice(i, i + PAGE_SIZE));
+        }
+        return pages;
+    }, []);
+
+    const goToPage = (nextPage) => {
+        const bounded = Math.max(0, Math.min(cardPages.length - 1, nextPage));
+        setCurrentPage(bounded);
+    };
+
+    const goNextPage = () => goToPage(currentPage + 1);
+    const goPrevPage = () => goToPage(currentPage - 1);
+
+    const onCarouselTouchStart = (event) => {
+        const x = event.changedTouches?.[0]?.clientX;
+        if (typeof x !== 'number') return;
+        setTouchStartX(x);
+        setTouchEndX(x);
+    };
+
+    const onCarouselTouchMove = (event) => {
+        const x = event.changedTouches?.[0]?.clientX;
+        if (typeof x !== 'number') return;
+        setTouchEndX(x);
+    };
+
+    const onCarouselTouchEnd = () => {
+        if (touchStartX === null || touchEndX === null) {
+            setTouchStartX(null);
+            setTouchEndX(null);
+            return;
+        }
+
+        const delta = touchStartX - touchEndX;
+        if (Math.abs(delta) >= SWIPE_THRESHOLD) {
+            if (delta > 0) goNextPage();
+            if (delta < 0) goPrevPage();
+        }
+
+        setTouchStartX(null);
+        setTouchEndX(null);
+    };
+
+    const onCarouselWheel = (event) => {
+        const absX = Math.abs(event.deltaX);
+        const absY = Math.abs(event.deltaY);
+        if (absX <= absY || absX < 2) return;
+
+        const now = Date.now();
+        if (now - trackpadCooldownRef.current < TRACKPAD_SWIPE_COOLDOWN_MS) {
+            event.preventDefault();
+            return;
+        }
+
+        if (now - trackpadLastEventRef.current > TRACKPAD_RESET_WINDOW_MS) {
+            trackpadAccumRef.current = 0;
+        }
+        trackpadLastEventRef.current = now;
+        trackpadAccumRef.current += event.deltaX;
+
+        if (Math.abs(trackpadAccumRef.current) >= TRACKPAD_SWIPE_THRESHOLD) {
+            if (trackpadAccumRef.current > 0) goNextPage();
+            if (trackpadAccumRef.current < 0) goPrevPage();
+            trackpadAccumRef.current = 0;
+            trackpadCooldownRef.current = now;
+        }
+
+        event.preventDefault();
+    };
+
+    const renderLiftIcon = (lift) => {
+        if (lift.iconType === 'image') {
+            return <img src={lift.iconSrc} alt={lift.iconAlt} style={{ width: '40px', height: '40px' }} />;
+        }
+        return <span role="img" aria-label={lift.label}>{lift.emoji}</span>;
+    };
+
     return (
         <div className="strength-tracker-container">
             <div className="top-bar">
@@ -285,83 +396,137 @@ const StrengthTracker = () => {
                 </div>
             </div>
 
-            <div className="strength-tracker-grid">
-                {LIFT_CONFIG.map(({ key, label, icon }) => {
-                    const filteredData = getFilteredHistory(historyData[key]);
-                    // Transform data for the chart: convert weight to selected unit
-                    const chartData = filteredData.map(d => ({
-                        ...d,
-                        displayWeight: convert(d.weight)
-                    }));
+            <div className="strength-tracker-carousel">
+                <div
+                    className="strength-tracker-carousel-viewport"
+                    onTouchStart={onCarouselTouchStart}
+                    onTouchMove={onCarouselTouchMove}
+                    onTouchEnd={onCarouselTouchEnd}
+                    onWheel={onCarouselWheel}
+                >
+                    <div
+                        className="strength-tracker-carousel-track"
+                        style={{ transform: `translateX(-${currentPage * 100}%)` }}
+                    >
+                        {cardPages.map((page, pageIndex) => (
+                            <div className="strength-tracker-page" key={`page-${pageIndex}`}>
+                                <div className="strength-tracker-grid">
+                                    {page.map((lift) => {
+                                        const { key, label } = lift;
+                                        const filteredData = getFilteredHistory(historyData[key]);
+                                        // Transform data for the chart: convert weight to selected unit
+                                        const chartData = filteredData.map(d => ({
+                                            ...d,
+                                            displayWeight: convert(d.weight)
+                                        }));
 
-                    // Use exact data points as ticks to ensure every log entry is labeled
-                    const chartTicks = chartData.map(d => d.timestamp);
+                                        // Use exact data points as ticks to ensure every log entry is labeled
+                                        const chartTicks = chartData.map(d => d.timestamp);
 
-                    return (
-                        <div key={key} className="lift-card">
-                            <span className="lift-icon">{icon}</span>
-                            <span className="lift-label">{label}</span>
+                                        return (
+                                            <div key={key} className="lift-card">
+                                                <span className="lift-icon">{renderLiftIcon(lift)}</span>
+                                                <span className="lift-label">{label}</span>
 
-                            <div
-                                className="lift-value-display"
-                                style={{ cursor: 'default', pointerEvents: 'none' }}
-                            >
-                                {maxes[key] > 0 ? convert(maxes[key]) : '--'}
-                                <div className="unit-label">{maxes[key] > 0 ? unit : ''}</div>
+                                                <div
+                                                    className="lift-value-display"
+                                                    style={{ cursor: 'default', pointerEvents: 'none' }}
+                                                >
+                                                    {maxes[key] > 0 ? convert(maxes[key]) : '--'}
+                                                    <div className="unit-label">{maxes[key] > 0 ? unit : ''}</div>
+                                                </div>
+
+                                                <button className="log-pr-btn" onClick={() => openLogModal(key)}>
+                                                    Log New PR
+                                                </button>
+
+                                                <div className="chart-container-expanded">
+                                                    {chartData && chartData.length > 1 ? (
+                                                        <ResponsiveContainer width="100%" height="100%">
+                                                            <LineChart data={chartData}>
+                                                                <XAxis
+                                                                    dataKey="timestamp"
+                                                                    type="number"
+                                                                    domain={['dataMin', 'dataMax']}
+                                                                    tickFormatter={(ts) => new Date(ts).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
+                                                                    tick={{ fontSize: 10, fill: '#aaa' }}
+                                                                    tickLine={false}
+                                                                    axisLine={false}
+                                                                    interval="preserveStartEnd"
+                                                                    ticks={chartTicks}
+                                                                />
+                                                                <YAxis
+                                                                    domain={['auto', 'auto']}
+                                                                    tick={{ fontSize: 10, fill: '#aaa' }}
+                                                                    tickLine={false}
+                                                                    axisLine={false}
+                                                                    width={40}
+                                                                    tickFormatter={(val) => Math.round(val)}
+                                                                />
+                                                                <Tooltip
+                                                                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                                                                    labelFormatter={(ts) => new Date(ts).toLocaleDateString()}
+                                                                    formatter={(val) => [`${val} ${unit}`, 'Weight']}
+                                                                />
+                                                                <Line
+                                                                    type="monotone"
+                                                                    dataKey="displayWeight"
+                                                                    stroke="#395aff"
+                                                                    strokeWidth={3}
+                                                                    dot={{ r: 4, fill: '#395aff', strokeWidth: 2, stroke: '#fff' }}
+                                                                    activeDot={{ r: 6 }}
+                                                                />
+                                                            </LineChart>
+                                                        </ResponsiveContainer>
+                                                    ) : (
+                                                        <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.3, fontSize: '0.8em' }}>
+                                                            {chartData.length === 1 ? 'Log more to see trend' : 'No history'}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
+                        ))}
+                    </div>
+                </div>
 
-                            <button className="log-pr-btn" onClick={() => openLogModal(key)}>
-                                Log New PR
-                            </button>
-
-                            <div className="chart-container-expanded">
-                                {chartData && chartData.length > 1 ? (
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <LineChart data={chartData}>
-                                            <XAxis
-                                                dataKey="timestamp"
-                                                type="number"
-                                                domain={['dataMin', 'dataMax']}
-                                                tickFormatter={(ts) => new Date(ts).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
-                                                tick={{ fontSize: 10, fill: '#aaa' }}
-                                                tickLine={false}
-                                                axisLine={false}
-                                                interval="preserveStartEnd"
-                                                ticks={chartTicks}
-                                            />
-                                            <YAxis
-                                                domain={['auto', 'auto']}
-                                                tick={{ fontSize: 10, fill: '#aaa' }}
-                                                tickLine={false}
-                                                axisLine={false}
-                                                width={40}
-                                                tickFormatter={(val) => Math.round(val)}
-                                            />
-                                            <Tooltip
-                                                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                                                labelFormatter={(ts) => new Date(ts).toLocaleDateString()}
-                                                formatter={(val) => [`${val} ${unit}`, 'Weight']}
-                                            />
-                                            <Line
-                                                type="monotone"
-                                                dataKey="displayWeight"
-                                                stroke="#395aff"
-                                                strokeWidth={3}
-                                                dot={{ r: 4, fill: '#395aff', strokeWidth: 2, stroke: '#fff' }}
-                                                activeDot={{ r: 6 }}
-                                            />
-                                        </LineChart>
-                                    </ResponsiveContainer>
-                                ) : (
-                                    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.3, fontSize: '0.8em' }}>
-                                        {chartData.length === 1 ? 'Log more to see trend' : 'No history'}
-                                    </div>
-                                )}
-                            </div>
+                {cardPages.length > 1 && (
+                    <div className="strength-tracker-carousel-nav">
+                        <button
+                            type="button"
+                            className="strength-tracker-page-arrow"
+                            onClick={goPrevPage}
+                            disabled={currentPage === 0}
+                            aria-label="Show previous lifts"
+                        >
+                            ←
+                        </button>
+                        <div className="strength-tracker-page-dots">
+                            {cardPages.map((_, index) => (
+                                <button
+                                    type="button"
+                                    key={`dot-${index}`}
+                                    className={`strength-tracker-page-dot ${currentPage === index ? 'active' : ''}`}
+                                    onClick={() => goToPage(index)}
+                                    aria-label={`Show lift page ${index + 1}`}
+                                />
+                            ))}
                         </div>
-                    );
-                })}
-            </div >
+                        <button
+                            type="button"
+                            className="strength-tracker-page-arrow"
+                            onClick={goNextPage}
+                            disabled={currentPage === cardPages.length - 1}
+                            aria-label="Show next lifts"
+                        >
+                            →
+                        </button>
+                    </div>
+                )}
+            </div>
 
             <div className="strength-tracker-controls" style={{ position: 'relative' }}>
                 <div className="time-range-controls">
@@ -433,15 +598,15 @@ const StrengthTracker = () => {
                 showHistoryModal && (
                     <div className="strength-modal-overlay" onClick={() => setShowHistoryModal(false)}>
                         <div className="strength-modal"
-                            style={{ maxWidth: '600px', maxHeight: '80vh', overflowY: 'hidden', padding: '1.5rem' }}
+                            style={{ maxWidth: '600px', maxHeight: '80vh', overflowY: 'hidden', padding: '1.25rem 1.5rem', gap: '0.5rem' }}
                             onClick={e => e.stopPropagation()}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
                                 <h3 style={{ margin: 0 }}>{rmType.toUpperCase()} History Log</h3>
                                 <button onClick={() => setShowHistoryModal(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>✖</button>
                             </div>
 
                             {/* Lift Filter */}
-                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
                                 <button
                                     onClick={() => setHistoryFilterLift('ALL')}
                                     style={{
@@ -477,24 +642,25 @@ const StrengthTracker = () => {
                                         {lift.label}
                                     </button>
                                 ))}
-                                <div style={{ marginLeft: 'auto' }}>
-                                    <button
-                                        onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
-                                        style={{
-                                            padding: '0.4rem 0.8rem',
-                                            borderRadius: '20px',
-                                            border: '1px solid #ddd',
-                                            background: '#f9fafc',
-                                            color: '#666',
-                                            cursor: 'pointer',
-                                            fontSize: '0.85rem',
-                                            fontWeight: 600,
-                                            whiteSpace: 'nowrap'
-                                        }}
-                                    >
-                                        Unit: {unit.toUpperCase()}
-                                    </button>
-                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.25rem' }}>
+                                <button
+                                    onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
+                                    style={{
+                                        padding: '0.4rem 0.8rem',
+                                        borderRadius: '20px',
+                                        border: '1px solid #ddd',
+                                        background: '#f9fafc',
+                                        color: '#666',
+                                        cursor: 'pointer',
+                                        fontSize: '0.85rem',
+                                        fontWeight: 600,
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    Unit: {unit.toUpperCase()}
+                                </button>
                             </div>
 
                             <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -525,11 +691,6 @@ const StrengthTracker = () => {
                                                         <button
                                                             onClick={() => handleEditHistory(item)}
                                                             style={{ background: 'none', border: 'none', cursor: 'pointer', marginRight: '0.5rem', color: '#666' }}
-                                                            title="Edit"
-                                                        >
-                                                            ✏️
-                                                        </button>
-                                                        <button
                                                             title="Edit"
                                                         >
                                                             ✏️
