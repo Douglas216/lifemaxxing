@@ -25,7 +25,7 @@ import BenchIcon from '../assets/bench_press.svg';
 import SquatIcon from '../assets/squat.svg';
 import DeadliftIcon from '../assets/deadlift.svg.svg';
 
-const LIFT_CONFIG = [
+const WEIGHT_EXERCISES = [
     { key: 'bench', label: 'Bench Press', iconType: 'image', iconSrc: BenchIcon, iconAlt: 'Bench' },
     { key: 'squat', label: 'Squat', iconType: 'image', iconSrc: SquatIcon, iconAlt: 'Squat' },
     { key: 'deadlift', label: 'Deadlift', iconType: 'image', iconSrc: DeadliftIcon, iconAlt: 'Deadlift' },
@@ -34,59 +34,134 @@ const LIFT_CONFIG = [
     { key: 'weightedPullup', label: 'Weighted Pullups', iconType: 'emoji', emoji: '🎯' }
 ];
 
-const LIFT_KEYS = LIFT_CONFIG.map(lift => lift.key);
+const REP_EXERCISES = [
+    { key: 'pushup', label: 'Push-up', iconType: 'emoji', emoji: '💪' },
+    { key: 'pullup', label: 'Pull-up', iconType: 'emoji', emoji: '🧗' },
+    { key: 'muscleup', label: 'Muscle-up', iconType: 'emoji', emoji: '🚀' }
+];
+
+const HOLD_EXERCISES = [
+    { key: 'plank', label: 'Plank', iconType: 'emoji', emoji: '🧱' },
+    { key: 'deadHang', label: 'Dead Hang', iconType: 'emoji', emoji: '🖐️' },
+    { key: 'handstand', label: 'Handstand', iconType: 'emoji', emoji: '🤸' }
+];
+
+const EXERCISES_BY_MODE = {
+    weight: WEIGHT_EXERCISES,
+    rep: REP_EXERCISES,
+    hold: HOLD_EXERCISES
+};
+
+const ALL_EXERCISES = [...WEIGHT_EXERCISES, ...REP_EXERCISES, ...HOLD_EXERCISES];
+
+const EXERCISE_LABEL_LOOKUP = ALL_EXERCISES.reduce((acc, exercise) => {
+    acc[exercise.key] = exercise.label;
+    return acc;
+}, {});
+
+const PR_MODE_OPTIONS = [
+    { key: 'weight', label: 'Weight PR' },
+    { key: 'rep', label: 'Rep PR' },
+    { key: 'hold', label: 'Hold PR' }
+];
+
+const MODE_LABEL_LOOKUP = PR_MODE_OPTIONS.reduce((acc, mode) => {
+    acc[mode.key] = mode.label;
+    return acc;
+}, {});
+
+const HISTORY_MODE_OPTIONS = [
+    { key: 'ALL', label: 'All Modes' },
+    ...PR_MODE_OPTIONS
+];
+
+const RM_OPTIONS = ['1rm', '5rm', '10rm', '20rm'];
 const PAGE_SIZE = 3;
 const SWIPE_THRESHOLD = 50;
 const TRACKPAD_SWIPE_THRESHOLD = 60;
 const TRACKPAD_SWIPE_COOLDOWN_MS = 280;
 const TRACKPAD_RESET_WINDOW_MS = 180;
 
-const createEmptyHistoryState = () => LIFT_KEYS.reduce((acc, key) => {
+const getTodayDateKey = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const normalizeMode = (value) => {
+    if (value === 'rep' || value === 'hold' || value === 'weight') return value;
+    return 'weight';
+};
+
+const getMetricTypeForMode = (mode) => {
+    if (mode === 'rep') return 'reps';
+    if (mode === 'hold') return 'holdSeconds';
+    return 'weightKg';
+};
+
+const createEmptyHistoryState = (keys) => keys.reduce((acc, key) => {
     acc[key] = [];
     return acc;
 }, {});
 
-const createEmptyDailyLookup = () => LIFT_KEYS.reduce((acc, key) => {
+const createEmptyDailyLookup = (keys) => keys.reduce((acc, key) => {
     acc[key] = {};
     return acc;
 }, {});
 
-const createEmptyMaxState = () => LIFT_KEYS.reduce((acc, key) => {
+const createEmptyMaxState = (keys) => keys.reduce((acc, key) => {
     acc[key] = 0;
     return acc;
 }, {});
 
+const getNumericValue = (entry) => {
+    if (typeof entry?.value === 'number' && Number.isFinite(entry.value)) return entry.value;
+    if (typeof entry?.weight === 'number' && Number.isFinite(entry.weight)) return entry.weight;
+
+    const parsedValue = Number.parseFloat(entry?.value);
+    if (Number.isFinite(parsedValue)) return parsedValue;
+
+    const parsedWeight = Number.parseFloat(entry?.weight);
+    if (Number.isFinite(parsedWeight)) return parsedWeight;
+
+    return 0;
+};
+
+const formatHoldDuration = (seconds) => {
+    const safeSeconds = Math.max(0, Math.round(Number.isFinite(seconds) ? seconds : 0));
+    const mins = Math.floor(safeSeconds / 60);
+    const secs = safeSeconds % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+};
+
 const StrengthTracker = () => {
     const { user } = useAuth();
-    // const [loading, setLoading] = useState(true);
-    const [unit, setUnit] = useState(() => localStorage.getItem('strength_unit') || 'kg'); // 'kg' or 'lb'
-    const [timeRange, setTimeRange] = useState('ALL'); // '1W', '1M', '1Y', 'ALL'
-    const [rmType, setRmType] = useState('1rm'); // '1rm', '5rm', '10rm', '20rm'
 
-    // History Data for Graphs keyed by lift key.
-    const [historyData, setHistoryData] = useState(() => createEmptyHistoryState());
+    const [unit, setUnit] = useState(() => localStorage.getItem('strength_unit') || 'kg');
+    const [timeRange, setTimeRange] = useState('ALL');
+    const [rmType, setRmType] = useState('1rm');
+    const [prMode, setPrMode] = useState('weight');
 
-    // Current Maxes (Cached or calculated from history)
-    const [maxes, setMaxes] = useState(() => createEmptyMaxState());
+    const activeExercises = useMemo(() => EXERCISES_BY_MODE[prMode] || [], [prMode]);
+    const activeExerciseKeys = useMemo(() => activeExercises.map(exercise => exercise.key), [activeExercises]);
 
-    // Modal State
+    const [historyData, setHistoryData] = useState(() => createEmptyHistoryState(WEIGHT_EXERCISES.map(exercise => exercise.key)));
+    const [maxes, setMaxes] = useState(() => createEmptyMaxState(WEIGHT_EXERCISES.map(exercise => exercise.key)));
+
     const [showLogModal, setShowLogModal] = useState(false);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
-    const [logLift, setLogLift] = useState(null); // lift key
-    const [logWeight, setLogWeight] = useState('');
-    const [logDate, setLogDate] = useState(() => {
-        const d = new Date();
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-    });
+    const [logLift, setLogLift] = useState(null);
+    const [logValue, setLogValue] = useState('');
+    const [logDate, setLogDate] = useState(() => getTodayDateKey());
+    const [editingId, setEditingId] = useState(null);
 
-    // Full History for History Modal
     const [fullHistory, setFullHistory] = useState([]);
 
-    const [historyFilterLift, setHistoryFilterLift] = useState('ALL'); // 'ALL' or lift key
-    const [deleteId, setDeleteId] = useState(null); // ID to confirm delete
+    const [historyFilterMode, setHistoryFilterMode] = useState('ALL');
+    const [historyFilterLift, setHistoryFilterLift] = useState('ALL');
+    const [deleteId, setDeleteId] = useState(null);
     const [currentPage, setCurrentPage] = useState(0);
     const [touchStartX, setTouchStartX] = useState(null);
     const [touchEndX, setTouchEndX] = useState(null);
@@ -94,99 +169,114 @@ const StrengthTracker = () => {
     const trackpadLastEventRef = useRef(0);
     const trackpadCooldownRef = useRef(0);
 
-    // Persist Unit
     useEffect(() => {
         localStorage.setItem('strength_unit', unit);
     }, [unit]);
 
-    // Fetch History for current RM Type
+    useEffect(() => {
+        setCurrentPage(0);
+        setHistoryFilterLift('ALL');
+    }, [prMode]);
+
+    useEffect(() => {
+        if (historyFilterLift === 'ALL') return;
+
+        const validOptions = historyFilterMode === 'ALL'
+            ? ALL_EXERCISES.map(exercise => exercise.key)
+            : (EXERCISES_BY_MODE[historyFilterMode] || []).map(exercise => exercise.key);
+
+        if (!validOptions.includes(historyFilterLift)) {
+            setHistoryFilterLift('ALL');
+        }
+    }, [historyFilterMode, historyFilterLift]);
+
     useEffect(() => {
         if (!user) return;
 
         const historyRef = collection(db, 'users', user.uid, 'strength_history');
-        const q = query(
-            historyRef,
-            where('rmType', '==', rmType)
-        );
+        const historyQuery = prMode === 'weight'
+            ? query(historyRef, where('rmType', '==', rmType))
+            : query(historyRef, where('prMode', '==', prMode));
 
-        const unsub = onSnapshot(q, (snapshot) => {
-            // Group by date to deduplicate multiple entries per day
-            const raw = createEmptyDailyLookup();
+        const unsub = onSnapshot(historyQuery, (snapshot) => {
+            const raw = createEmptyDailyLookup(activeExerciseKeys);
 
-            snapshot.docs.forEach(doc => {
-                const d = doc.data();
-                if (d.lift && raw[d.lift] !== undefined) {
-                    // Create date string for grouping (YYYY-MM-DD)
-                    const dateObj = d.date?.toDate() || new Date();
-                    const y = dateObj.getFullYear();
-                    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-                    const day = String(dateObj.getDate()).padStart(2, '0');
-                    const dateKey = `${y}-${m}-${day}`;
+            snapshot.docs.forEach((snapDoc) => {
+                const data = snapDoc.data();
+                const itemMode = normalizeMode(data.prMode);
+                if (itemMode !== prMode) return;
 
-                    const currentTs = dateObj.getTime();
-                    const existing = raw[d.lift][dateKey];
+                if (!data.lift || raw[data.lift] === undefined) return;
 
-                    // Keep the entry with the latest timestamp for that day
-                    if (!existing || currentTs > existing.timestamp) {
-                        raw[d.lift][dateKey] = {
-                            timestamp: currentTs,
-                            weight: d.weight,
-                            id: doc.id
-                        };
-                    }
+                const dateObj = data.date?.toDate ? data.date.toDate() : new Date();
+                const y = dateObj.getFullYear();
+                const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+                const d = String(dateObj.getDate()).padStart(2, '0');
+                const dateKey = `${y}-${m}-${d}`;
+
+                const timestamp = dateObj.getTime();
+                const existing = raw[data.lift][dateKey];
+                const value = getNumericValue(data);
+
+                if (!existing || timestamp > existing.timestamp) {
+                    raw[data.lift][dateKey] = {
+                        timestamp,
+                        value,
+                        id: snapDoc.id
+                    };
                 }
             });
 
-            // Convert back to sorted arrays
-            const processed = createEmptyHistoryState();
-            Object.keys(raw).forEach(lift => {
-                processed[lift] = Object.values(raw[lift]).sort((a, b) => a.timestamp - b.timestamp);
+            const processed = createEmptyHistoryState(activeExerciseKeys);
+            activeExerciseKeys.forEach((key) => {
+                processed[key] = Object.values(raw[key]).sort((a, b) => a.timestamp - b.timestamp);
+            });
+
+            const newMaxes = createEmptyMaxState(activeExerciseKeys);
+            activeExerciseKeys.forEach((key) => {
+                newMaxes[key] = Math.max(0, ...processed[key].map(item => item.value));
             });
 
             setHistoryData(processed);
-
-            // Calculate Maxes from history (All-time best for this RM)
-            const newMaxes = createEmptyMaxState();
-            LIFT_KEYS.forEach((lift) => {
-                newMaxes[lift] = Math.max(0, ...processed[lift].map(i => i.weight));
-            });
             setMaxes(newMaxes);
         });
 
         return () => unsub();
+    }, [user, prMode, rmType, activeExerciseKeys]);
 
-    }, [user, rmType]);
-
-    // Fetch Full History when History Modal is Open
     useEffect(() => {
         if (!user || !showHistoryModal) return;
 
         const historyRef = collection(db, 'users', user.uid, 'strength_history');
-        const q = query(
-            historyRef,
-            where('rmType', '==', rmType),
-            orderBy('date', 'desc')
-        );
+        const historyQuery = query(historyRef, orderBy('date', 'desc'));
 
-        const unsub = onSnapshot(q, (snapshot) => {
-            const data = snapshot.docs.map(doc => {
-                const d = doc.data();
+        const unsub = onSnapshot(historyQuery, (snapshot) => {
+            const data = snapshot.docs.map((snapDoc) => {
+                const item = snapDoc.data();
+                const mode = normalizeMode(item.prMode);
+                const dateObj = item.date?.toDate ? item.date.toDate() : new Date();
                 return {
-                    id: doc.id,
-                    ...d,
-                    // Safe date conversion
-                    dateObj: d.date?.toDate ? d.date.toDate() : new Date(),
-                    formattedDate: d.date?.toDate
-                        ? d.date.toDate().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-                        : 'N/A'
+                    id: snapDoc.id,
+                    ...item,
+                    prMode: mode,
+                    metricType: item.metricType || getMetricTypeForMode(mode),
+                    value: getNumericValue(item),
+                    rmType: mode === 'weight' ? (item.rmType || '1rm') : null,
+                    dateObj,
+                    formattedDate: dateObj.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
                 };
             });
             setFullHistory(data);
         });
-        return () => unsub();
-    }, [user, showHistoryModal, rmType]);
 
-    // Filtered Data for Graphs based on timeRange
+        return () => unsub();
+    }, [user, showHistoryModal]);
+
+    const convertWeight = (kg) => {
+        const val = unit === 'kg' ? kg : kg * 2.20462;
+        return parseFloat(val.toFixed(1));
+    };
+
     const getFilteredHistory = (data) => {
         if (!data || data.length === 0) return [];
         if (timeRange === 'ALL') return data;
@@ -197,77 +287,103 @@ const StrengthTracker = () => {
         if (timeRange === '1M') cutoff = now - 30 * 24 * 60 * 60 * 1000;
         if (timeRange === '1Y') cutoff = now - 365 * 24 * 60 * 60 * 1000;
 
-        return data.filter(d => d.timestamp >= cutoff);
+        return data.filter(item => item.timestamp >= cutoff);
     };
 
-    // Handle Saving New PR - Enforce 1 per day
-    const handleLogSave = async () => {
-        if (!user || !logLift || !logWeight) return;
-
-        let val = parseFloat(logWeight);
-        if (isNaN(val) || val < 0) val = 0;
-
-        // Convert to Kg if input was Lb
-        let valKg = unit === 'kg' ? val : val / 2.20462;
-        valKg = Math.round(valKg * 100) / 100;
-
-        try {
-            // Generate ID for today: lift_rmType_YYYY-MM-DD
-            // Use logDate 
-            const [y, m, d] = logDate.split('-');
-            const sentDate = new Date(y, m - 1, d);
-            // Ensure we set the time to noon to avoid timezone rolling issues with simple dates
-            sentDate.setHours(12, 0, 0, 0);
-
-            const dateKey = `${y}-${m}-${d}`;
-            const docId = `${logLift}_${rmType}_${dateKey}`;
-
-            // Use setDoc to overwrite if exists (enforces 1 per day)
-            await setDoc(doc(db, 'users', user.uid, 'strength_history', docId), {
-                lift: logLift,
-                rmType: rmType,
-                weight: valKg,
-                date: sentDate, // Use the selected date
-                dateKey: dateKey // Helpful for debugging/querying
-            });
-
-            setShowLogModal(false);
-            setLogLift(null);
-            setLogWeight('');
-        } catch (err) {
-            console.error("Error logging PR:", err);
-        }
+    const closeLogModal = () => {
+        setShowLogModal(false);
+        setEditingId(null);
+        setLogLift(null);
+        setLogValue('');
     };
 
     const openLogModal = (lift) => {
+        setEditingId(null);
         setLogLift(lift);
-        setLogWeight('');
-        const d = new Date();
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        setLogDate(`${year}-${month}-${day}`); // Default to today (Local)
+        setLogValue('');
+        setLogDate(getTodayDateKey());
         setShowLogModal(true);
     };
 
+    const handleLogSave = async () => {
+        if (!user || !logLift || !logDate || logValue === '') return;
+
+        let parsedValue = Number.parseFloat(logValue);
+        if (!Number.isFinite(parsedValue) || parsedValue < 0) parsedValue = 0;
+
+        let storedValue = parsedValue;
+        if (prMode === 'weight') {
+            storedValue = unit === 'kg' ? parsedValue : parsedValue / 2.20462;
+            storedValue = Math.round(storedValue * 100) / 100;
+        } else {
+            storedValue = Math.round(parsedValue);
+        }
+
+        try {
+            const [y, m, d] = logDate.split('-');
+            if (!y || !m || !d) return;
+
+            const sentDate = new Date(y, m - 1, d);
+            sentDate.setHours(12, 0, 0, 0);
+
+            const dateKey = `${y}-${m}-${d}`;
+            const metricKey = prMode === 'weight' ? rmType : 'max';
+            const docId = `${prMode}_${logLift}_${metricKey}_${dateKey}`;
+
+            const payload = {
+                lift: logLift,
+                prMode,
+                metricType: getMetricTypeForMode(prMode),
+                value: storedValue,
+                date: sentDate,
+                dateKey
+            };
+
+            if (prMode === 'weight') {
+                payload.rmType = rmType;
+                payload.weight = storedValue;
+            }
+
+            await setDoc(doc(db, 'users', user.uid, 'strength_history', docId), payload);
+
+            if (editingId && editingId !== docId) {
+                await deleteDoc(doc(db, 'users', user.uid, 'strength_history', editingId));
+            }
+
+            closeLogModal();
+        } catch (err) {
+            console.error('Error logging PR:', err);
+        }
+    };
 
     const confirmDelete = async () => {
-        if (!deleteId) return;
+        if (!deleteId || !user) return;
         try {
             await deleteDoc(doc(db, 'users', user.uid, 'strength_history', deleteId));
             setDeleteId(null);
-        } catch (e) {
-            console.error("Delete failed", e);
+        } catch (err) {
+            console.error('Delete failed', err);
         }
     };
 
     const handleEditHistory = (item) => {
-        // Pre-fill log modal
-        setRmType(item.rmType);
-        setLogLift(item.lift);
-        setLogWeight(unit === 'kg' ? item.weight : Math.round(item.weight * 2.20462 * 10) / 10);
+        const itemMode = normalizeMode(item.prMode);
+        setPrMode(itemMode);
 
-        // Convert item date to YYYY-MM-DD for input
+        if (itemMode === 'weight' && item.rmType) {
+            setRmType(item.rmType);
+        }
+
+        setLogLift(item.lift);
+        if (itemMode === 'weight') {
+            const displayValue = unit === 'kg'
+                ? Math.round(item.value * 10) / 10
+                : convertWeight(item.value);
+            setLogValue(String(displayValue));
+        } else {
+            setLogValue(String(Math.max(0, Math.round(item.value))));
+        }
+
         if (item.dateObj) {
             const year = item.dateObj.getFullYear();
             const month = String(item.dateObj.getMonth() + 1).padStart(2, '0');
@@ -275,25 +391,104 @@ const StrengthTracker = () => {
             setLogDate(`${year}-${month}-${day}`);
         }
 
-        setShowHistoryModal(false); // Close history to show editor
+        setEditingId(item.id);
+        setShowHistoryModal(false);
         setShowLogModal(true);
     };
 
-    const convert = (kg) => {
-        const val = unit === 'kg' ? kg : kg * 2.20462;
-        return parseFloat(val.toFixed(1));
+    const formatCardValue = (value) => {
+        if (!Number.isFinite(value) || value <= 0) {
+            return { main: '--', unitLabel: '' };
+        }
+
+        if (prMode === 'weight') {
+            return { main: convertWeight(value), unitLabel: unit };
+        }
+
+        if (prMode === 'rep') {
+            return { main: Math.round(value), unitLabel: 'reps' };
+        }
+
+        return { main: formatHoldDuration(value), unitLabel: 'm:ss' };
     };
 
-    const totalKg = (maxes.bench + maxes.squat + maxes.deadlift) || 0;
-    const totalDisplay = convert(totalKg);
+    const formatTooltipValue = (val) => {
+        const numeric = Number.isFinite(val) ? val : 0;
+
+        if (prMode === 'weight') return `${numeric} ${unit}`;
+        if (prMode === 'rep') return `${Math.round(numeric)} reps`;
+        return formatHoldDuration(numeric);
+    };
+
+    const formatYAxisValue = (val) => {
+        const numeric = Number.isFinite(val) ? val : 0;
+        if (prMode !== 'hold') return Math.round(numeric);
+        if (numeric < 60) return `${Math.round(numeric)}s`;
+        return formatHoldDuration(numeric);
+    };
+
+    const getLogModalTitle = () => {
+        if (prMode === 'weight') return `Log New ${rmType.toUpperCase()} PR`;
+        if (prMode === 'rep') return 'Log New Rep PR';
+        return 'Log New Hold PR';
+    };
+
+    const getLogInputLabel = () => {
+        if (prMode === 'weight') return `Weight (${unit})`;
+        if (prMode === 'rep') return 'Reps';
+        return 'Hold (seconds)';
+    };
+
+    const getLogInputPlaceholder = () => {
+        if (prMode === 'weight') return `Enter weight in ${unit}`;
+        if (prMode === 'rep') return 'Enter reps completed';
+        return 'Enter hold time in seconds';
+    };
+
+    const cyclePrMode = () => {
+        setPrMode((currentMode) => {
+            const currentIndex = PR_MODE_OPTIONS.findIndex((mode) => mode.key === currentMode);
+            const nextIndex = (currentIndex + 1) % PR_MODE_OPTIONS.length;
+            return PR_MODE_OPTIONS[nextIndex].key;
+        });
+    };
+
+    const totalKg = (maxes.bench || 0) + (maxes.squat || 0) + (maxes.deadlift || 0);
+    const totalDisplay = convertWeight(totalKg);
 
     const cardPages = useMemo(() => {
         const pages = [];
-        for (let i = 0; i < LIFT_CONFIG.length; i += PAGE_SIZE) {
-            pages.push(LIFT_CONFIG.slice(i, i + PAGE_SIZE));
+        for (let i = 0; i < activeExercises.length; i += PAGE_SIZE) {
+            pages.push(activeExercises.slice(i, i + PAGE_SIZE));
         }
         return pages;
-    }, []);
+    }, [activeExercises]);
+
+    const historyExerciseOptions = useMemo(() => {
+        if (historyFilterMode === 'ALL') return ALL_EXERCISES;
+        return EXERCISES_BY_MODE[historyFilterMode] || [];
+    }, [historyFilterMode]);
+
+    const filteredHistory = useMemo(() => {
+        return fullHistory.filter((item) => {
+            const modeMatch = historyFilterMode === 'ALL' || item.prMode === historyFilterMode;
+            const liftMatch = historyFilterLift === 'ALL' || item.lift === historyFilterLift;
+            return modeMatch && liftMatch;
+        });
+    }, [fullHistory, historyFilterMode, historyFilterLift]);
+
+    const shouldShowHistoryUnitToggle = historyFilterMode === 'ALL' || historyFilterMode === 'weight';
+
+    const formatHistoryRecord = (item) => {
+        if (item.prMode === 'weight') {
+            const rmLabel = item.rmType ? ` (${item.rmType.toUpperCase()})` : '';
+            return `${convertWeight(item.value)} ${unit}${rmLabel}`;
+        }
+        if (item.prMode === 'rep') {
+            return `${Math.max(0, Math.round(item.value))} reps`;
+        }
+        return formatHoldDuration(item.value);
+    };
 
     const goToPage = (nextPage) => {
         const bounded = Math.max(0, Math.min(cardPages.length - 1, nextPage));
@@ -370,26 +565,21 @@ const StrengthTracker = () => {
     return (
         <div className="strength-tracker-container">
             <div className="top-bar">
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-                        <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>PR Tracker</h2>
-                    </div>
-                    <div style={{ fontSize: '0.9rem', color: 'rgba(31, 35, 51, 0.6)', marginTop: '0.25rem' }}>
+                <div className="strength-tracker-heading">
+                    <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, textAlign: 'left' }}>Strength Tracker</h2>
+                    <div style={{ fontSize: '0.9rem', color: 'rgba(31, 35, 51, 0.6)', marginTop: '0.25rem', textAlign: 'left' }}>
                         It's what you do in the dark that puts you in the light.
                     </div>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                    <div className="rm-controls" style={{ display: 'flex', gap: '0.5rem' }}>
-                        {['1rm', '5rm', '10rm', '20rm'].map(rm => (
-                            <button
-                                key={rm}
-                                className={`rm-toggle-btn ${rmType === rm ? 'active' : ''}`}
-                                onClick={() => setRmType(rm)}
-                            >
-                                {rm.toUpperCase()}
-                            </button>
-                        ))}
-                    </div>
+                <div className="strength-tracker-top-actions">
+                    <button
+                        type="button"
+                        className="pr-mode-cycle-btn"
+                        onClick={cyclePrMode}
+                        title="Click to switch PR type"
+                    >
+                        {MODE_LABEL_LOOKUP[prMode] || 'Weight PR'}
+                    </button>
                     <button className="history-btn" onClick={() => setShowHistoryModal(true)}>
                         Show History
                     </button>
@@ -412,28 +602,29 @@ const StrengthTracker = () => {
                             <div className="strength-tracker-page" key={`page-${pageIndex}`}>
                                 <div className="strength-tracker-grid">
                                     {page.map((lift) => {
-                                        const { key, label } = lift;
-                                        const filteredData = getFilteredHistory(historyData[key]);
-                                        // Transform data for the chart: convert weight to selected unit
-                                        const chartData = filteredData.map(d => ({
-                                            ...d,
-                                            displayWeight: convert(d.weight)
+                                        const { key } = lift;
+                                        const filteredData = getFilteredHistory(historyData[key] || []);
+                                        const chartData = filteredData.map((item) => ({
+                                            ...item,
+                                            displayValue: prMode === 'weight'
+                                                ? convertWeight(item.value)
+                                                : Math.round(item.value)
                                         }));
 
-                                        // Use exact data points as ticks to ensure every log entry is labeled
-                                        const chartTicks = chartData.map(d => d.timestamp);
+                                        const chartTicks = chartData.map((item) => item.timestamp);
+                                        const valueDisplay = formatCardValue(maxes[key]);
 
                                         return (
                                             <div key={key} className="lift-card">
                                                 <span className="lift-icon">{renderLiftIcon(lift)}</span>
-                                                <span className="lift-label">{label}</span>
+                                                <span className="lift-label">{lift.label}</span>
 
                                                 <div
                                                     className="lift-value-display"
                                                     style={{ cursor: 'default', pointerEvents: 'none' }}
                                                 >
-                                                    {maxes[key] > 0 ? convert(maxes[key]) : '--'}
-                                                    <div className="unit-label">{maxes[key] > 0 ? unit : ''}</div>
+                                                    {valueDisplay.main}
+                                                    <div className="unit-label">{valueDisplay.unitLabel}</div>
                                                 </div>
 
                                                 <button className="log-pr-btn" onClick={() => openLogModal(key)}>
@@ -441,7 +632,7 @@ const StrengthTracker = () => {
                                                 </button>
 
                                                 <div className="chart-container-expanded">
-                                                    {chartData && chartData.length > 1 ? (
+                                                    {chartData.length > 1 ? (
                                                         <ResponsiveContainer width="100%" height="100%">
                                                             <LineChart data={chartData}>
                                                                 <XAxis
@@ -460,17 +651,17 @@ const StrengthTracker = () => {
                                                                     tick={{ fontSize: 10, fill: '#aaa' }}
                                                                     tickLine={false}
                                                                     axisLine={false}
-                                                                    width={40}
-                                                                    tickFormatter={(val) => Math.round(val)}
+                                                                    width={46}
+                                                                    tickFormatter={formatYAxisValue}
                                                                 />
                                                                 <Tooltip
                                                                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                                                                     labelFormatter={(ts) => new Date(ts).toLocaleDateString()}
-                                                                    formatter={(val) => [`${val} ${unit}`, 'Weight']}
+                                                                    formatter={(val) => [formatTooltipValue(val), MODE_LABEL_LOOKUP[prMode]]}
                                                                 />
                                                                 <Line
                                                                     type="monotone"
-                                                                    dataKey="displayWeight"
+                                                                    dataKey="displayValue"
                                                                     stroke="#395aff"
                                                                     strokeWidth={3}
                                                                     dot={{ r: 4, fill: '#395aff', strokeWidth: 2, stroke: '#fff' }}
@@ -528,122 +719,175 @@ const StrengthTracker = () => {
                 )}
             </div>
 
-            <div className="strength-tracker-controls" style={{ position: 'relative' }}>
-                <div className="time-range-controls">
-                    {['1W', '1M', '1Y', 'ALL'].map(range => (
-                        <button
-                            key={range}
-                            className={`time-range-btn ${timeRange === range ? 'active' : ''}`}
-                            onClick={() => setTimeRange(range)}
-                        >
+            <div className="strength-tracker-controls">
+                <div className="strength-tracker-controls-left">
+                    {prMode === 'weight' && (
+                        <div className="rm-controls rm-controls-left">
+                            {RM_OPTIONS.map((rm) => (
+                                <button
+                                    key={rm}
+                                    className={`rm-toggle-btn ${rmType === rm ? 'active' : ''}`}
+                                    onClick={() => setRmType(rm)}
+                                >
+                                    {rm.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                <div className="strength-tracker-controls-center">
+                    <div className="time-range-controls">
+                        {['1W', '1M', '1Y', 'ALL'].map((range) => (
+                            <button
+                                key={range}
+                                className={`time-range-btn ${timeRange === range ? 'active' : ''}`}
+                                onClick={() => setTimeRange(range)}
+                            >
                             {range}
                         </button>
-                    ))}
+                        ))}
+                    </div>
                 </div>
-                <button
-                    className="unit-toggle-btn"
-                    onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
-                    style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)' }}
-                >
-                    Unit: {unit.toUpperCase()}
-                </button>
+                <div className="strength-tracker-controls-right">
+                    {prMode === 'weight' && (
+                        <button
+                            className="unit-toggle-btn"
+                            onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
+                        >
+                            Unit: {unit.toUpperCase()}
+                        </button>
+                    )}
+                </div>
             </div>
 
-            <div className="strength-tracker-total">
-                <span className="total-label">Big Three Total</span>
-                <span className="total-value">{totalDisplay} <span style={{ fontSize: '0.9rem', fontWeight: 500, opacity: 0.6 }}>{unit}</span></span>
-            </div>
+            {prMode === 'weight' && (
+                <div className="strength-tracker-total">
+                    <span className="total-label">Big Three Total</span>
+                    <span className="total-value">
+                        {totalDisplay}{' '}
+                        <span style={{ fontSize: '0.9rem', fontWeight: 500, opacity: 0.6 }}>{unit}</span>
+                    </span>
+                </div>
+            )}
 
-            {/* LOG MODAL */}
-            {
-                showLogModal && (
-                    <div className="strength-modal-overlay" onClick={() => setShowLogModal(false)}>
-                        <div className="strength-modal" onClick={e => e.stopPropagation()}>
-                            <h3>Log New {rmType.toUpperCase()} PR</h3>
-                            <div style={{ textAlign: 'center', color: '#666', fontSize: '0.9rem' }}>
-                                {LIFT_CONFIG.find(l => l.key === logLift)?.label}
-                            </div>
+            {showLogModal && (
+                <div className="strength-modal-overlay" onClick={closeLogModal}>
+                    <div className="strength-modal" onClick={(e) => e.stopPropagation()}>
+                        <h3>{getLogModalTitle()}</h3>
+                        <div style={{ textAlign: 'center', color: '#666', fontSize: '0.9rem' }}>
+                            {EXERCISE_LABEL_LOOKUP[logLift] || logLift}
+                        </div>
 
-                            <div className="lift-input-group">
-                                <label style={{ fontSize: '0.8rem', color: '#666', fontWeight: 600 }}>Date</label>
-                                <input
-                                    type="date"
-                                    className="lift-input"
-                                    style={{ fontSize: '1rem', padding: '0.5rem' }}
-                                    value={logDate}
-                                    onChange={e => setLogDate(e.target.value)}
-                                />
-                                <label style={{ fontSize: '0.8rem', color: '#666', fontWeight: 600, marginTop: '0.5rem' }}>Weight ({unit})</label>
-                                <input
-                                    type="number"
-                                    className="lift-input"
-                                    value={logWeight}
-                                    onChange={(e) => setLogWeight(e.target.value)}
-                                    placeholder={`Enter weight in ${unit}`}
-                                    autoFocus
-                                />
-                            </div>
+                        <div className="lift-input-group">
+                            <label style={{ fontSize: '0.8rem', color: '#666', fontWeight: 600 }}>Date</label>
+                            <input
+                                type="date"
+                                className="lift-input"
+                                style={{ fontSize: '1rem', padding: '0.5rem' }}
+                                value={logDate}
+                                onChange={(e) => setLogDate(e.target.value)}
+                            />
+                            <label style={{ fontSize: '0.8rem', color: '#666', fontWeight: 600, marginTop: '0.5rem' }}>
+                                {getLogInputLabel()}
+                            </label>
+                            <input
+                                type="number"
+                                min="0"
+                                step={prMode === 'weight' ? '0.1' : '1'}
+                                className="lift-input"
+                                value={logValue}
+                                onChange={(e) => setLogValue(e.target.value)}
+                                placeholder={getLogInputPlaceholder()}
+                                autoFocus
+                            />
+                            {prMode === 'hold' && (
+                                <div style={{ textAlign: 'center', color: '#888', fontSize: '0.8rem' }}>
+                                    Displayed as m:ss in charts and history.
+                                </div>
+                            )}
+                        </div>
 
-                            <div className="strength-modal-actions">
-                                <button className="strength-modal-btn cancel" onClick={() => setShowLogModal(false)}>Cancel</button>
-                                <button className="strength-modal-btn save" onClick={handleLogSave}>Log Record</button>
-                            </div>
+                        <div className="strength-modal-actions">
+                            <button className="strength-modal-btn cancel" onClick={closeLogModal}>Cancel</button>
+                            <button className="strength-modal-btn save" onClick={handleLogSave}>Log Record</button>
                         </div>
                     </div>
-                )
-            }
+                </div>
+            )}
 
-            {/* HISTORY MODAL */}
-            {
-                showHistoryModal && (
-                    <div className="strength-modal-overlay" onClick={() => setShowHistoryModal(false)}>
-                        <div className="strength-modal"
-                            style={{ maxWidth: '600px', maxHeight: '80vh', overflowY: 'hidden', padding: '1.25rem 1.5rem', gap: '0.5rem' }}
-                            onClick={e => e.stopPropagation()}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-                                <h3 style={{ margin: 0 }}>{rmType.toUpperCase()} History Log</h3>
-                                <button onClick={() => setShowHistoryModal(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>✖</button>
-                            </div>
+            {showHistoryModal && (
+                <div className="strength-modal-overlay" onClick={() => setShowHistoryModal(false)}>
+                    <div
+                        className="strength-modal"
+                        style={{ maxWidth: '760px', maxHeight: '80vh', overflowY: 'hidden', padding: '1.25rem 1.5rem', gap: '0.5rem' }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                            <h3 style={{ margin: 0 }}>PR History Log</h3>
+                            <button onClick={() => setShowHistoryModal(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>✖</button>
+                        </div>
 
-                            {/* Lift Filter */}
-                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
+                            {HISTORY_MODE_OPTIONS.map((mode) => (
                                 <button
-                                    onClick={() => setHistoryFilterLift('ALL')}
+                                    key={mode.key}
+                                    onClick={() => setHistoryFilterMode(mode.key)}
                                     style={{
                                         padding: '0.4rem 0.8rem',
                                         borderRadius: '20px',
-                                        border: historyFilterLift === 'ALL' ? 'none' : '1px solid #ddd',
-                                        background: historyFilterLift === 'ALL' ? '#1f2333' : 'white',
-                                        color: historyFilterLift === 'ALL' ? 'white' : '#666',
+                                        border: historyFilterMode === mode.key ? 'none' : '1px solid #ddd',
+                                        background: historyFilterMode === mode.key ? '#1f2333' : 'white',
+                                        color: historyFilterMode === mode.key ? 'white' : '#666',
                                         cursor: 'pointer',
                                         fontSize: '0.85rem',
                                         fontWeight: 600,
                                         whiteSpace: 'nowrap'
                                     }}
                                 >
-                                    All Lifts
+                                    {mode.label}
                                 </button>
-                                {LIFT_CONFIG.map(lift => (
-                                    <button
-                                        key={lift.key}
-                                        onClick={() => setHistoryFilterLift(lift.key)}
-                                        style={{
-                                            padding: '0.4rem 0.8rem',
-                                            borderRadius: '20px',
-                                            border: historyFilterLift === lift.key ? 'none' : '1px solid #ddd',
-                                            background: historyFilterLift === lift.key ? '#395aff' : 'white',
-                                            color: historyFilterLift === lift.key ? 'white' : '#666',
-                                            cursor: 'pointer',
-                                            fontSize: '0.85rem',
-                                            fontWeight: 600,
-                                            whiteSpace: 'nowrap'
-                                        }}
-                                    >
-                                        {lift.label}
-                                    </button>
-                                ))}
-                            </div>
+                            ))}
+                        </div>
 
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
+                            <button
+                                onClick={() => setHistoryFilterLift('ALL')}
+                                style={{
+                                    padding: '0.4rem 0.8rem',
+                                    borderRadius: '20px',
+                                    border: historyFilterLift === 'ALL' ? 'none' : '1px solid #ddd',
+                                    background: historyFilterLift === 'ALL' ? '#395aff' : 'white',
+                                    color: historyFilterLift === 'ALL' ? 'white' : '#666',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 600,
+                                    whiteSpace: 'nowrap'
+                                }}
+                            >
+                                All Exercises
+                            </button>
+                            {historyExerciseOptions.map((exercise) => (
+                                <button
+                                    key={exercise.key}
+                                    onClick={() => setHistoryFilterLift(exercise.key)}
+                                    style={{
+                                        padding: '0.4rem 0.8rem',
+                                        borderRadius: '20px',
+                                        border: historyFilterLift === exercise.key ? 'none' : '1px solid #ddd',
+                                        background: historyFilterLift === exercise.key ? '#395aff' : 'white',
+                                        color: historyFilterLift === exercise.key ? 'white' : '#666',
+                                        cursor: 'pointer',
+                                        fontSize: '0.85rem',
+                                        fontWeight: 600,
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    {exercise.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {shouldShowHistoryUnitToggle && (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.25rem' }}>
                                 <button
                                     onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
@@ -662,68 +906,69 @@ const StrengthTracker = () => {
                                     Unit: {unit.toUpperCase()}
                                 </button>
                             </div>
+                        )}
 
-                            <div style={{ overflowY: 'auto', flex: 1 }}>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-                                    <thead>
-                                        <tr style={{ borderBottom: '2px solid #eee', textAlign: 'left', color: '#888' }}>
-                                            <th style={{ padding: '0.5rem' }}>Date</th>
-                                            <th style={{ padding: '0.5rem' }}>Lift</th>
-                                            <th style={{ padding: '0.5rem' }}>Weight</th>
-                                            <th style={{ padding: '0.5rem', textAlign: 'right' }}>Actions</th>
+                        <div style={{ overflowY: 'auto', flex: 1 }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '2px solid #eee', textAlign: 'left', color: '#888' }}>
+                                        <th style={{ padding: '0.5rem' }}>Date</th>
+                                        <th style={{ padding: '0.5rem' }}>Mode</th>
+                                        <th style={{ padding: '0.5rem' }}>Exercise</th>
+                                        <th style={{ padding: '0.5rem' }}>Record</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'right' }}>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredHistory.map((item) => (
+                                        <tr key={item.id} style={{ borderBottom: '1px solid #f5f5f5' }}>
+                                            <td style={{ padding: '0.8rem 0.5rem', color: '#555' }}>
+                                                {item.formattedDate}
+                                            </td>
+                                            <td style={{ padding: '0.8rem 0.5rem', fontWeight: 600 }}>
+                                                {MODE_LABEL_LOOKUP[item.prMode] || item.prMode}
+                                            </td>
+                                            <td style={{ padding: '0.8rem 0.5rem', fontWeight: 600 }}>
+                                                {EXERCISE_LABEL_LOOKUP[item.lift] || item.lift}
+                                            </td>
+                                            <td style={{ padding: '0.8rem 0.5rem', fontWeight: 700, color: '#395aff' }}>
+                                                {formatHistoryRecord(item)}
+                                            </td>
+                                            <td style={{ padding: '0.8rem 0.5rem', textAlign: 'right' }}>
+                                                <button
+                                                    onClick={() => handleEditHistory(item)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', marginRight: '0.5rem', color: '#666' }}
+                                                    title="Edit"
+                                                >
+                                                    ✏️
+                                                </button>
+                                                <button
+                                                    onClick={() => setDeleteId(item.id)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}
+                                                    title="Delete"
+                                                >
+                                                    🗑️
+                                                </button>
+                                            </td>
                                         </tr>
-                                    </thead>
-                                    <tbody>
-                                        {fullHistory
-                                            .filter(item => historyFilterLift === 'ALL' || item.lift === historyFilterLift)
-                                            .map(item => (
-                                                <tr key={item.id} style={{ borderBottom: '1px solid #f5f5f5' }}>
-                                                    <td style={{ padding: '0.8rem 0.5rem', color: '#555' }}>
-                                                        {item.formattedDate}
-                                                    </td>
-                                                    <td style={{ padding: '0.8rem 0.5rem', fontWeight: 600 }}>
-                                                        {LIFT_CONFIG.find(l => l.key === item.lift)?.label || item.lift}
-                                                    </td>
-                                                    <td style={{ padding: '0.8rem 0.5rem', fontWeight: 700, color: '#395aff' }}>
-                                                        {convert(item.weight)} {unit}
-                                                    </td>
-                                                    <td style={{ padding: '0.8rem 0.5rem', textAlign: 'right' }}>
-                                                        <button
-                                                            onClick={() => handleEditHistory(item)}
-                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', marginRight: '0.5rem', color: '#666' }}
-                                                            title="Edit"
-                                                        >
-                                                            ✏️
-                                                        </button>
-                                                        <button
-                                                            onClick={() => setDeleteId(item.id)}
-                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}
-                                                            title="Delete"
-                                                        >
-                                                            🗑️
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        {fullHistory.filter(item => historyFilterLift === 'ALL' || item.lift === historyFilterLift).length === 0 && (
-                                            <tr>
-                                                <td colSpan="4" style={{ textAlign: 'center', padding: '2rem', color: '#aaa' }}>
-                                                    No history found.
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
+                                    ))}
+                                    {filteredHistory.length === 0 && (
+                                        <tr>
+                                            <td colSpan="5" style={{ textAlign: 'center', padding: '2rem', color: '#aaa' }}>
+                                                No history found.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                )
-            }
+                </div>
+            )}
 
-            {/* DELETE CONFIRMATION MODAL */}
             {deleteId && (
                 <div className="strength-modal-overlay" onClick={() => setDeleteId(null)}>
-                    <div className="strength-modal" style={{ maxWidth: '300px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                    <div className="strength-modal" style={{ maxWidth: '300px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
                         <h3 style={{ marginTop: 0 }}>Delete Record?</h3>
                         <p style={{ color: '#666', marginBottom: '1.5rem' }}>Are you sure you want to remove this PR entry?</p>
                         <div className="strength-modal-actions">
@@ -733,7 +978,7 @@ const StrengthTracker = () => {
                     </div>
                 </div>
             )}
-        </div >
+        </div>
     );
 };
 

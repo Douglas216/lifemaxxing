@@ -230,9 +230,57 @@
 .top-bar {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap;
     width: 100%;
     margin-bottom: 1.5rem;
+}
+
+.strength-tracker-heading {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+}
+
+.strength-tracker-top-actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.pr-mode-cycle-btn {
+    background: transparent;
+    border: 2px solid #1f2333;
+    border-radius: 8px;
+    color: #1f2333;
+    padding: 0.35rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    min-width: 110px;
+    text-align: center;
+}
+
+.pr-mode-cycle-btn:hover {
+    background: #1f2333;
+    color: #fff;
+}
+
+.rm-controls {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.rm-controls-left {
+    justify-content: flex-start;
 }
 
 .unit-toggle-btn {
@@ -260,11 +308,29 @@
 }
 
 .strength-tracker-controls {
-    display: flex;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
     gap: 0.75rem;
     margin-top: 1rem;
     width: 100%;
+}
+
+.strength-tracker-controls-left {
+    justify-self: start;
+}
+
+.strength-tracker-controls-center {
+    justify-self: center;
+}
+
+.strength-tracker-controls-right {
+    justify-self: end;
+}
+
+.strength-tracker-controls-center .time-range-controls {
+    display: flex;
+    align-items: center;
 }
 
 .rm-toggle-btn {
@@ -294,6 +360,7 @@
 .time-range-controls {
     display: flex;
     gap: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .time-range-btn {
@@ -435,4 +502,48 @@
 .history-btn:hover {
     background: #f9fafc;
     border-color: rgba(20, 24, 38, 0.3);
+}
+
+@media (max-width: 900px) {
+    .strength-tracker-top-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 600px) {
+    .top-bar {
+        margin-bottom: 1rem;
+    }
+
+    .pr-mode-cycle-btn {
+        width: 100%;
+    }
+
+    .strength-tracker-controls {
+        grid-template-columns: 1fr;
+        gap: 0.6rem;
+    }
+
+    .strength-tracker-controls-left,
+    .strength-tracker-controls-center,
+    .strength-tracker-controls-right {
+        width: 100%;
+    }
+
+    .strength-tracker-controls-left {
+        justify-self: stretch;
+    }
+
+    .strength-tracker-controls-center {
+        justify-self: stretch;
+        display: flex;
+        justify-content: center;
+    }
+
+    .strength-tracker-controls-right {
+        justify-self: stretch;
+        display: flex;
+        justify-content: flex-end;
+    }
 }
