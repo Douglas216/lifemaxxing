@@ -285,6 +285,7 @@ const ClimbingTracker = () => {
 
     const [timeRange, setTimeRange] = useState('ALL');
     const [climbType, setClimbType] = useState('boulder');
+    const [showBoulderInfo, setShowBoulderInfo] = useState(false);
 
     const [showLogModal, setShowLogModal] = useState(false);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -345,6 +346,7 @@ const ClimbingTracker = () => {
     const autocompleteServiceRef = useRef(null);
     const placesServiceRef = useRef(null);
     const placesContainerRef = useRef(null);
+    const boulderInfoRef = useRef(null);
     const gymSearchRequestRef = useRef(0);
     const editGymSearchRequestRef = useRef(0);
     const countryCodeRef = useRef(getPreferredCountryCode());
@@ -373,7 +375,21 @@ const ClimbingTracker = () => {
         setSelectedGrade(getDefaultGradeByType(climbType));
         setBulkCounts(createBulkCounts(climbType));
         if (climbType === 'speed') setLogMode('single');
+        if (climbType !== 'boulder') setShowBoulderInfo(false);
     }, [climbType]);
+
+    useEffect(() => {
+        if (!showBoulderInfo) return undefined;
+        const handleOutsideClick = (event) => {
+            if (!boulderInfoRef.current?.contains(event.target)) {
+                setShowBoulderInfo(false);
+            }
+        };
+        document.addEventListener('mousedown', handleOutsideClick);
+        return () => {
+            document.removeEventListener('mousedown', handleOutsideClick);
+        };
+    }, [showBoulderInfo]);
 
     useEffect(() => {
         if (!user) {
@@ -1423,7 +1439,7 @@ const ClimbingTracker = () => {
                     <span className="climb-subtitle">The only way is up.</span>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="climb-type-controls">
                     <button
                         className="climb-type-toggle-btn"
                         onClick={cycleClimbType}
@@ -1431,6 +1447,23 @@ const ClimbingTracker = () => {
                     >
                         {climbType === 'boulder' ? 'Bouldering' : climbType === 'top_rope' ? 'Top Rope' : climbType === 'lead' ? 'Lead' : 'Speed'}
                     </button>
+                    {climbType === 'boulder' && (
+                        <div className="vscale-info-wrap" ref={boulderInfoRef}>
+                            <button
+                                type="button"
+                                className="vscale-info-btn"
+                                onClick={() => setShowBoulderInfo((prev) => !prev)}
+                                aria-label="About V grade scale"
+                            >
+                                i
+                            </button>
+                            {showBoulderInfo && (
+                                <div className="vscale-info-popover">
+                                    V grade was named after John Sherman and first developed in Hueco Tanks, Texas.
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <div className="climb-top-actions">
@@ -1842,7 +1875,7 @@ const ClimbingTracker = () => {
                                                                 );
                                                             })()}
                                                             <span className={`history-route-remark ${climb.remark ? '' : 'empty'}`} title={climb.remark || ''}>
-                                                                {climb.remark ? climb.remark : 'No route remark'}
+                                                                {climb.remark || ''}
                                                             </span>
                                                         </div>
                                                         <div className="history-item-actions">
