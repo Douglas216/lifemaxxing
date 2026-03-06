@@ -3,6 +3,7 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+    overflow: visible;
 }
 
 .top-bar {
@@ -10,17 +11,31 @@
     justify-content: space-between;
     align-items: flex-start;
     margin-bottom: 1.5rem;
+    overflow: visible;
 }
 
 .title-group {
     display: flex;
     flex-direction: column;
+    overflow: visible;
 }
 
 .climb-subtitle {
     font-size: 0.9rem;
     color: rgba(31, 35, 51, 0.6);
     margin-top: 0.25rem;
+}
+
+.climb-subtitle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: 0.25rem;
+    overflow: visible;
+}
+
+.climb-subtitle-row .climb-subtitle {
+    margin-top: 0;
 }
 
 .climb-top-actions {
@@ -66,6 +81,10 @@
     transition: all 0.2s ease;
     min-width: 100px;
     text-align: center;
+    line-height: 1.1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .climb-type-toggle-btn:hover {
@@ -103,10 +122,11 @@
 }
 
 .vscale-info-popover {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    width: 260px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(500px, calc(100vw - 2rem));
+    max-width: calc(100vw - 2rem);
     padding: 0.6rem 0.7rem;
     border-radius: 10px;
     border: 1px solid rgba(20, 24, 38, 0.12);
@@ -115,7 +135,28 @@
     font-size: 0.78rem;
     line-height: 1.35;
     box-shadow: 0 10px 22px rgba(15, 23, 42, 0.14);
-    z-index: 20;
+    z-index: 2000;
+    pointer-events: none;
+}
+
+.vscale-info-popover p {
+    margin: 0;
+    white-space: normal;
+}
+
+.vscale-info-popover strong {
+    font-weight: 800;
+    color: #1f2333;
+}
+
+.vscale-info-map {
+    margin-top: 0.55rem;
+    width: 100%;
+    max-height: 170px;
+    object-fit: contain;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    background: #f8fafc;
 }
 
 .time-range-controls {
@@ -135,6 +176,10 @@
     transition: all 0.2s ease;
     min-width: 60px;
     text-align: center;
+    line-height: 1.1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .time-range-btn:hover {
@@ -175,6 +220,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    line-height: 1.1;
 }
 
 .log-climb-btn.full-width {

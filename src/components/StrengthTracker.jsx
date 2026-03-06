@@ -827,41 +827,42 @@ const StrengthTracker = () => {
                             <button onClick={() => setShowHistoryModal(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>✖</button>
                         </div>
 
-                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
-                            {HISTORY_MODE_OPTIONS.map((mode) => (
+                        <div className="history-filter-row history-filter-row-top">
+                            <div className="history-filter-scroll">
+                                {HISTORY_MODE_OPTIONS.map((mode) => (
+                                    <button
+                                        key={mode.key}
+                                        onClick={() => setHistoryFilterMode(mode.key)}
+                                        className="history-filter-pill"
+                                        style={{
+                                            border: historyFilterMode === mode.key ? 'none' : '1px solid #ddd',
+                                            background: historyFilterMode === mode.key ? '#1f2333' : 'white',
+                                            color: historyFilterMode === mode.key ? 'white' : '#666'
+                                        }}
+                                    >
+                                        {mode.label}
+                                    </button>
+                                ))}
+                            </div>
+                            {shouldShowHistoryUnitToggle && (
                                 <button
-                                    key={mode.key}
-                                    onClick={() => setHistoryFilterMode(mode.key)}
-                                    style={{
-                                        padding: '0.4rem 0.8rem',
-                                        borderRadius: '20px',
-                                        border: historyFilterMode === mode.key ? 'none' : '1px solid #ddd',
-                                        background: historyFilterMode === mode.key ? '#1f2333' : 'white',
-                                        color: historyFilterMode === mode.key ? 'white' : '#666',
-                                        cursor: 'pointer',
-                                        fontSize: '0.85rem',
-                                        fontWeight: 600,
-                                        whiteSpace: 'nowrap'
-                                    }}
+                                    onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
+                                    className="history-unit-toggle-btn"
                                 >
-                                    {mode.label}
+                                    Unit: {unit.toUpperCase()}
                                 </button>
-                            ))}
+                            )}
                         </div>
 
-                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
+                        <div className="history-filter-row history-filter-row-exercises">
+                            <div className="history-filter-scroll">
                             <button
                                 onClick={() => setHistoryFilterLift('ALL')}
+                                className="history-filter-pill"
                                 style={{
-                                    padding: '0.4rem 0.8rem',
-                                    borderRadius: '20px',
                                     border: historyFilterLift === 'ALL' ? 'none' : '1px solid #ddd',
                                     background: historyFilterLift === 'ALL' ? '#395aff' : 'white',
-                                    color: historyFilterLift === 'ALL' ? 'white' : '#666',
-                                    cursor: 'pointer',
-                                    fontSize: '0.85rem',
-                                    fontWeight: 600,
-                                    whiteSpace: 'nowrap'
+                                    color: historyFilterLift === 'ALL' ? 'white' : '#666'
                                 }}
                             >
                                 All Exercises
@@ -870,43 +871,18 @@ const StrengthTracker = () => {
                                 <button
                                     key={exercise.key}
                                     onClick={() => setHistoryFilterLift(exercise.key)}
+                                    className="history-filter-pill"
                                     style={{
-                                        padding: '0.4rem 0.8rem',
-                                        borderRadius: '20px',
                                         border: historyFilterLift === exercise.key ? 'none' : '1px solid #ddd',
                                         background: historyFilterLift === exercise.key ? '#395aff' : 'white',
-                                        color: historyFilterLift === exercise.key ? 'white' : '#666',
-                                        cursor: 'pointer',
-                                        fontSize: '0.85rem',
-                                        fontWeight: 600,
-                                        whiteSpace: 'nowrap'
+                                        color: historyFilterLift === exercise.key ? 'white' : '#666'
                                     }}
                                 >
                                     {exercise.label}
                                 </button>
                             ))}
-                        </div>
-
-                        {shouldShowHistoryUnitToggle && (
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.25rem' }}>
-                                <button
-                                    onClick={() => setUnit(unit === 'kg' ? 'lb' : 'kg')}
-                                    style={{
-                                        padding: '0.4rem 0.8rem',
-                                        borderRadius: '20px',
-                                        border: '1px solid #ddd',
-                                        background: '#f9fafc',
-                                        color: '#666',
-                                        cursor: 'pointer',
-                                        fontSize: '0.85rem',
-                                        fontWeight: 600,
-                                        whiteSpace: 'nowrap'
-                                    }}
-                                >
-                                    Unit: {unit.toUpperCase()}
-                                </button>
                             </div>
-                        )}
+                        </div>
 
                         <div style={{ overflowY: 'auto', flex: 1 }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>

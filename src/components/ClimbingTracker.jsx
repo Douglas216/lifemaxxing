@@ -29,6 +29,8 @@ import {
 } from 'recharts';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase';
+import blankUsMap from '../assets/Blank_US_Map_(states_only).svg';
+import ydsUsMap from '../assets/YDS_US_Map_Yosemite.svg';
 import './ClimbingTracker.css';
 
 const V_GRADES = ['VB', 'V0', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17'];
@@ -85,6 +87,8 @@ const getGradesForType = (type) => {
     if (type === 'speed') return [];
     return YDS_GRADES;
 };
+
+const supportsGradeTooltip = (type) => type === 'boulder' || type === 'top_rope' || type === 'lead';
 
 const getPreferredCountryCode = () => {
     if (typeof navigator === 'undefined') return 'us';
@@ -285,7 +289,8 @@ const ClimbingTracker = () => {
 
     const [timeRange, setTimeRange] = useState('ALL');
     const [climbType, setClimbType] = useState('boulder');
-    const [showBoulderInfo, setShowBoulderInfo] = useState(false);
+    const [showGradeTooltip, setShowGradeTooltip] = useState(false);
+    const [gradeTooltipPos, setGradeTooltipPos] = useState({ top: 0, left: 0 });
 
     const [showLogModal, setShowLogModal] = useState(false);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -346,7 +351,7 @@ const ClimbingTracker = () => {
     const autocompleteServiceRef = useRef(null);
     const placesServiceRef = useRef(null);
     const placesContainerRef = useRef(null);
-    const boulderInfoRef = useRef(null);
+    const gradeInfoBtnRef = useRef(null);
     const gymSearchRequestRef = useRef(0);
     const editGymSearchRequestRef = useRef(0);
     const countryCodeRef = useRef(getPreferredCountryCode());
@@ -375,21 +380,41 @@ const ClimbingTracker = () => {
         setSelectedGrade(getDefaultGradeByType(climbType));
         setBulkCounts(createBulkCounts(climbType));
         if (climbType === 'speed') setLogMode('single');
-        if (climbType !== 'boulder') setShowBoulderInfo(false);
+        if (!supportsGradeTooltip(climbType)) setShowGradeTooltip(false);
     }, [climbType]);
 
+    const updateGradeTooltipPosition = () => {
+        if (!gradeInfoBtnRef.current || typeof window === 'undefined') return;
+        const rect = gradeInfoBtnRef.current.getBoundingClientRect();
+        const horizontalMargin = 12;
+        const tooltipWidth = Math.min(500, window.innerWidth - horizontalMargin * 2);
+        let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+        left = Math.max(horizontalMargin, Math.min(left, window.innerWidth - tooltipWidth - horizontalMargin));
+        setGradeTooltipPos({
+            top: rect.bottom + 10,
+            left
+        });
+    };
+
+    const openGradeTooltip = () => {
+        updateGradeTooltipPosition();
+        setShowGradeTooltip(true);
+    };
+
+    const closeGradeTooltip = () => {
+        setShowGradeTooltip(false);
+    };
+
     useEffect(() => {
-        if (!showBoulderInfo) return undefined;
-        const handleOutsideClick = (event) => {
-            if (!boulderInfoRef.current?.contains(event.target)) {
-                setShowBoulderInfo(false);
-            }
-        };
-        document.addEventListener('mousedown', handleOutsideClick);
+        if (!showGradeTooltip) return undefined;
+        const handleLayoutChange = () => updateGradeTooltipPosition();
+        window.addEventListener('resize', handleLayoutChange);
+        window.addEventListener('scroll', handleLayoutChange, true);
         return () => {
-            document.removeEventListener('mousedown', handleOutsideClick);
+            window.removeEventListener('resize', handleLayoutChange);
+            window.removeEventListener('scroll', handleLayoutChange, true);
         };
-    }, [showBoulderInfo]);
+    }, [showGradeTooltip]);
 
     useEffect(() => {
         if (!user) {
@@ -1430,13 +1455,33 @@ const ClimbingTracker = () => {
     const canSaveClimbEdit = editClimbType === 'speed'
         ? Number.isFinite(parsedEditClimbTime) && parsedEditClimbTime > 0
         : Boolean(editClimbGrade);
+    const isRopeType = climbType === 'top_rope' || climbType === 'lead';
+    const isGradeTooltipSupported = supportsGradeTooltip(climbType);
 
     return (
         <div className="climbing-tracker-container">
             <div className="top-bar">
                 <div className="title-group">
                     <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#1f2333' }}>Climbing Tracker</h2>
-                    <span className="climb-subtitle">The only way is up.</span>
+                    <div className="climb-subtitle-row">
+                        <span className="climb-subtitle">The only way is up.</span>
+                        {isGradeTooltipSupported && (
+                            <div className="vscale-info-wrap">
+                                <button
+                                    type="button"
+                                    className="vscale-info-btn"
+                                    aria-label="About climbing grade scale"
+                                    ref={gradeInfoBtnRef}
+                                    onMouseEnter={openGradeTooltip}
+                                    onMouseLeave={closeGradeTooltip}
+                                    onFocus={openGradeTooltip}
+                                    onBlur={closeGradeTooltip}
+                                >
+                                    i
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <div className="climb-type-controls">
@@ -1447,23 +1492,6 @@ const ClimbingTracker = () => {
                     >
                         {climbType === 'boulder' ? 'Bouldering' : climbType === 'top_rope' ? 'Top Rope' : climbType === 'lead' ? 'Lead' : 'Speed'}
                     </button>
-                    {climbType === 'boulder' && (
-                        <div className="vscale-info-wrap" ref={boulderInfoRef}>
-                            <button
-                                type="button"
-                                className="vscale-info-btn"
-                                onClick={() => setShowBoulderInfo((prev) => !prev)}
-                                aria-label="About V grade scale"
-                            >
-                                i
-                            </button>
-                            {showBoulderInfo && (
-                                <div className="vscale-info-popover">
-                                    V grade was named after John Sherman and first developed in Hueco Tanks, Texas.
-                                </div>
-                            )}
-                        </div>
-                    )}
                 </div>
 
                 <div className="climb-top-actions">
@@ -1483,6 +1511,39 @@ const ClimbingTracker = () => {
                     </button>
                 </div>
             </div>
+
+            {showGradeTooltip && createPortal(
+                <div
+                    className="vscale-info-popover"
+                    style={{ top: `${gradeTooltipPos.top}px`, left: `${gradeTooltipPos.left}px` }}
+                >
+                    {isRopeType ? (
+                        <p>
+                            The <strong>Yosemite Decimal System (YDS)</strong> is the grading scale used for <strong>top rope and lead</strong> route difficulty.
+                            YDS has <strong>Classes 1 to 5</strong>: <strong>Class 1-4</strong> covers hiking and scrambling (progressing from walking to steeper terrain
+                            where hands may be used), while <strong>Class 5</strong> is technical roped climbing. In this tracker, roped climbs use <strong>Class 5</strong> grades,
+                            usually from about <strong>5.6 (easier)</strong> to <strong>5.15d (hardest)</strong>. Within a number grade, letters <strong>a-d</strong> show finer
+                            steps (<strong>a easiest, d hardest</strong>). The system was developed in <strong>Yosemite Valley, California</strong> and became the U.S. standard for
+                            roped climbing grades.
+                        </p>
+                    ) : (
+                        <p>
+                            The <strong>V scale</strong>, aka the Hueco scale, is a rating system for bouldering
+                            difficulty, currently ranging from VB (easiest) to V17 (hardest). It originated in the
+                            late 1980s and early 1990s in <strong>Hueco Tanks, Texas</strong>, where American climber <strong>John "Vermin" Sherman</strong> developed the system to describe the difficulty of short, powerful boulder problems that were
+                            not well represented by traditional rope-climbing grades.
+                        </p>
+                    )}
+                    <img
+                        src={isRopeType ? ydsUsMap : blankUsMap}
+                        alt={isRopeType
+                            ? 'Map of the United States highlighting California and Yosemite Valley'
+                            : 'Map of the United States showing state boundaries'}
+                        className="vscale-info-map"
+                    />
+                </div>,
+                document.body
+            )}
 
             <div className="chart-area">
                 <ResponsiveContainer width="100%" height="100%">
