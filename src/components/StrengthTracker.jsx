@@ -31,7 +31,8 @@ const WEIGHT_EXERCISES = [
     { key: 'deadlift', label: 'Deadlift', iconType: 'image', iconSrc: DeadliftIcon, iconAlt: 'Deadlift' },
     { key: 'ohp', label: 'Barbell Overhead Press', iconType: 'emoji', emoji: '🏋️' },
     { key: 'latPulldown', label: 'Lat Pulldown', iconType: 'emoji', emoji: '🦅' },
-    { key: 'weightedPullup', label: 'Weighted Pullups', iconType: 'emoji', emoji: '🎯' }
+    { key: 'weightedPullup', label: 'Weighted Pullups', iconType: 'emoji', emoji: '🎯' },
+    { key: 'seatedCableRow', label: 'Seated Cable Row', iconType: 'emoji', emoji: '🚣' }
 ];
 
 const REP_EXERCISES = [
@@ -75,6 +76,17 @@ const HISTORY_MODE_OPTIONS = [
     ...PR_MODE_OPTIONS
 ];
 
+const DEAD_HANG_LIFT = 'deadHang';
+const DEAD_HANG_VARIANTS = [
+    { key: 'left', label: 'Left' },
+    { key: 'both', label: 'Both' },
+    { key: 'right', label: 'Right' }
+];
+const DEAD_HANG_VARIANT_LOOKUP = DEAD_HANG_VARIANTS.reduce((acc, variant) => {
+    acc[variant.key] = variant.label;
+    return acc;
+}, {});
+
 const RM_OPTIONS = ['1rm', '5rm', '10rm', '20rm'];
 const PAGE_SIZE = 3;
 const SWIPE_THRESHOLD = 50;
@@ -101,18 +113,33 @@ const getMetricTypeForMode = (mode) => {
     return 'weightKg';
 };
 
+const isDeadHangLift = (lift, mode) => lift === DEAD_HANG_LIFT && mode === 'hold';
+
+const normalizeDeadHangVariant = (value) => {
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (DEAD_HANG_VARIANT_LOOKUP[normalized]) return normalized;
+    }
+    return 'both';
+};
+
+const createDeadHangVariantState = (createValue) => DEAD_HANG_VARIANTS.reduce((acc, variant) => {
+    acc[variant.key] = createValue();
+    return acc;
+}, {});
+
 const createEmptyHistoryState = (keys) => keys.reduce((acc, key) => {
-    acc[key] = [];
+    acc[key] = key === DEAD_HANG_LIFT ? createDeadHangVariantState(() => []) : [];
     return acc;
 }, {});
 
 const createEmptyDailyLookup = (keys) => keys.reduce((acc, key) => {
-    acc[key] = {};
+    acc[key] = key === DEAD_HANG_LIFT ? createDeadHangVariantState(() => ({})) : {};
     return acc;
 }, {});
 
 const createEmptyMaxState = (keys) => keys.reduce((acc, key) => {
-    acc[key] = 0;
+    acc[key] = key === DEAD_HANG_LIFT ? createDeadHangVariantState(() => 0) : 0;
     return acc;
 }, {});
 
@@ -143,16 +170,18 @@ const StrengthTracker = () => {
     const [timeRange, setTimeRange] = useState('ALL');
     const [rmType, setRmType] = useState('1rm');
     const [prMode, setPrMode] = useState('weight');
+    const [selectedDeadHangVariant, setSelectedDeadHangVariant] = useState('both');
 
     const activeExercises = useMemo(() => EXERCISES_BY_MODE[prMode] || [], [prMode]);
     const activeExerciseKeys = useMemo(() => activeExercises.map(exercise => exercise.key), [activeExercises]);
 
-    const [historyData, setHistoryData] = useState(() => createEmptyHistoryState(WEIGHT_EXERCISES.map(exercise => exercise.key)));
-    const [maxes, setMaxes] = useState(() => createEmptyMaxState(WEIGHT_EXERCISES.map(exercise => exercise.key)));
+    const [historyData, setHistoryData] = useState(() => createEmptyHistoryState(ALL_EXERCISES.map(exercise => exercise.key)));
+    const [maxes, setMaxes] = useState(() => createEmptyMaxState(ALL_EXERCISES.map(exercise => exercise.key)));
 
     const [showLogModal, setShowLogModal] = useState(false);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [logLift, setLogLift] = useState(null);
+    const [logDeadHangVariant, setLogDeadHangVariant] = useState('both');
     const [logValue, setLogValue] = useState('');
     const [logDate, setLogDate] = useState(() => getTodayDateKey());
     const [editingId, setEditingId] = useState(null);
@@ -161,6 +190,7 @@ const StrengthTracker = () => {
 
     const [historyFilterMode, setHistoryFilterMode] = useState('ALL');
     const [historyFilterLift, setHistoryFilterLift] = useState('ALL');
+    const [historyDeadHangVariantFilter, setHistoryDeadHangVariantFilter] = useState('ALL');
     const [deleteId, setDeleteId] = useState(null);
     const [currentPage, setCurrentPage] = useState(0);
     const [touchStartX, setTouchStartX] = useState(null);
@@ -177,6 +207,12 @@ const StrengthTracker = () => {
         setCurrentPage(0);
         setHistoryFilterLift('ALL');
     }, [prMode]);
+
+    useEffect(() => {
+        if (historyFilterLift !== DEAD_HANG_LIFT) {
+            setHistoryDeadHangVariantFilter('ALL');
+        }
+    }, [historyFilterLift]);
 
     useEffect(() => {
         if (historyFilterLift === 'ALL') return;
@@ -207,6 +243,9 @@ const StrengthTracker = () => {
                 if (itemMode !== prMode) return;
 
                 if (!data.lift || raw[data.lift] === undefined) return;
+                const variantKey = isDeadHangLift(data.lift, itemMode)
+                    ? normalizeDeadHangVariant(data.deadHangVariant)
+                    : null;
 
                 const dateObj = data.date?.toDate ? data.date.toDate() : new Date();
                 const y = dateObj.getFullYear();
@@ -215,25 +254,39 @@ const StrengthTracker = () => {
                 const dateKey = `${y}-${m}-${d}`;
 
                 const timestamp = dateObj.getTime();
-                const existing = raw[data.lift][dateKey];
+                const dailyLookup = variantKey ? raw[data.lift][variantKey] : raw[data.lift];
+                const existing = dailyLookup[dateKey];
                 const value = getNumericValue(data);
 
                 if (!existing || timestamp > existing.timestamp) {
-                    raw[data.lift][dateKey] = {
+                    dailyLookup[dateKey] = {
                         timestamp,
                         value,
-                        id: snapDoc.id
+                        id: snapDoc.id,
+                        deadHangVariant: variantKey || undefined
                     };
                 }
             });
 
             const processed = createEmptyHistoryState(activeExerciseKeys);
             activeExerciseKeys.forEach((key) => {
+                if (key === DEAD_HANG_LIFT) {
+                    DEAD_HANG_VARIANTS.forEach((variant) => {
+                        processed[key][variant.key] = Object.values(raw[key][variant.key]).sort((a, b) => a.timestamp - b.timestamp);
+                    });
+                    return;
+                }
                 processed[key] = Object.values(raw[key]).sort((a, b) => a.timestamp - b.timestamp);
             });
 
             const newMaxes = createEmptyMaxState(activeExerciseKeys);
             activeExerciseKeys.forEach((key) => {
+                if (key === DEAD_HANG_LIFT) {
+                    DEAD_HANG_VARIANTS.forEach((variant) => {
+                        newMaxes[key][variant.key] = Math.max(0, ...processed[key][variant.key].map((item) => item.value));
+                    });
+                    return;
+                }
                 newMaxes[key] = Math.max(0, ...processed[key].map(item => item.value));
             });
 
@@ -259,6 +312,7 @@ const StrengthTracker = () => {
                     id: snapDoc.id,
                     ...item,
                     prMode: mode,
+                    deadHangVariant: isDeadHangLift(item.lift, mode) ? normalizeDeadHangVariant(item.deadHangVariant) : null,
                     metricType: item.metricType || getMetricTypeForMode(mode),
                     value: getNumericValue(item),
                     rmType: mode === 'weight' ? (item.rmType || '1rm') : null,
@@ -294,12 +348,14 @@ const StrengthTracker = () => {
         setShowLogModal(false);
         setEditingId(null);
         setLogLift(null);
+        setLogDeadHangVariant('both');
         setLogValue('');
     };
 
-    const openLogModal = (lift) => {
+    const openLogModal = (lift, variant = 'both') => {
         setEditingId(null);
         setLogLift(lift);
+        setLogDeadHangVariant(isDeadHangLift(lift, prMode) ? normalizeDeadHangVariant(variant) : 'both');
         setLogValue('');
         setLogDate(getTodayDateKey());
         setShowLogModal(true);
@@ -328,7 +384,10 @@ const StrengthTracker = () => {
 
             const dateKey = `${y}-${m}-${d}`;
             const metricKey = prMode === 'weight' ? rmType : 'max';
-            const docId = `${prMode}_${logLift}_${metricKey}_${dateKey}`;
+            const deadHangVariant = isDeadHangLift(logLift, prMode) ? normalizeDeadHangVariant(logDeadHangVariant) : null;
+            const docId = deadHangVariant
+                ? `${prMode}_${logLift}_${metricKey}_${deadHangVariant}_${dateKey}`
+                : `${prMode}_${logLift}_${metricKey}_${dateKey}`;
 
             const payload = {
                 lift: logLift,
@@ -342,6 +401,9 @@ const StrengthTracker = () => {
             if (prMode === 'weight') {
                 payload.rmType = rmType;
                 payload.weight = storedValue;
+            }
+            if (deadHangVariant) {
+                payload.deadHangVariant = deadHangVariant;
             }
 
             await setDoc(doc(db, 'users', user.uid, 'strength_history', docId), payload);
@@ -375,6 +437,7 @@ const StrengthTracker = () => {
         }
 
         setLogLift(item.lift);
+        setLogDeadHangVariant(isDeadHangLift(item.lift, itemMode) ? normalizeDeadHangVariant(item.deadHangVariant) : 'both');
         if (itemMode === 'weight') {
             const displayValue = unit === 'kg'
                 ? Math.round(item.value * 10) / 10
@@ -422,7 +485,8 @@ const StrengthTracker = () => {
 
     const formatYAxisValue = (val) => {
         const numeric = Number.isFinite(val) ? val : 0;
-        if (prMode !== 'hold') return Math.round(numeric);
+        if (prMode === 'weight') return Number.isInteger(numeric) ? numeric : numeric.toFixed(1);
+        if (prMode === 'rep') return Math.round(numeric);
         if (numeric < 60) return `${Math.round(numeric)}s`;
         return formatHoldDuration(numeric);
     };
@@ -469,13 +533,18 @@ const StrengthTracker = () => {
         return EXERCISES_BY_MODE[historyFilterMode] || [];
     }, [historyFilterMode]);
 
+    const shouldShowDeadHangVariantFilter = historyFilterLift === DEAD_HANG_LIFT;
+
     const filteredHistory = useMemo(() => {
         return fullHistory.filter((item) => {
             const modeMatch = historyFilterMode === 'ALL' || item.prMode === historyFilterMode;
             const liftMatch = historyFilterLift === 'ALL' || item.lift === historyFilterLift;
-            return modeMatch && liftMatch;
+            const variantMatch = !shouldShowDeadHangVariantFilter
+                || historyDeadHangVariantFilter === 'ALL'
+                || item.deadHangVariant === historyDeadHangVariantFilter;
+            return modeMatch && liftMatch && variantMatch;
         });
-    }, [fullHistory, historyFilterMode, historyFilterLift]);
+    }, [fullHistory, historyFilterMode, historyFilterLift, historyDeadHangVariantFilter, shouldShowDeadHangVariantFilter]);
 
     const shouldShowHistoryUnitToggle = historyFilterMode === 'ALL' || historyFilterMode === 'weight';
 
@@ -489,6 +558,8 @@ const StrengthTracker = () => {
         }
         return formatHoldDuration(item.value);
     };
+
+    const getDeadHangVariantLabel = (variant) => DEAD_HANG_VARIANT_LOOKUP[normalizeDeadHangVariant(variant)] || 'Both';
 
     const goToPage = (nextPage) => {
         const bounded = Math.max(0, Math.min(cardPages.length - 1, nextPage));
@@ -603,7 +674,11 @@ const StrengthTracker = () => {
                                 <div className="strength-tracker-grid">
                                     {page.map((lift) => {
                                         const { key } = lift;
-                                        const filteredData = getFilteredHistory(historyData[key] || []);
+                                        const isDeadHangCard = isDeadHangLift(key, prMode);
+                                        const liftHistory = isDeadHangCard
+                                            ? (historyData[key]?.[selectedDeadHangVariant] || [])
+                                            : (historyData[key] || []);
+                                        const filteredData = getFilteredHistory(liftHistory);
                                         const chartData = filteredData.map((item) => ({
                                             ...item,
                                             displayValue: prMode === 'weight'
@@ -612,12 +687,29 @@ const StrengthTracker = () => {
                                         }));
 
                                         const chartTicks = chartData.map((item) => item.timestamp);
-                                        const valueDisplay = formatCardValue(maxes[key]);
+                                        const rawMaxValue = isDeadHangCard
+                                            ? (maxes[key]?.[selectedDeadHangVariant] || 0)
+                                            : maxes[key];
+                                        const valueDisplay = formatCardValue(rawMaxValue);
 
                                         return (
                                             <div key={key} className="lift-card">
                                                 <span className="lift-icon">{renderLiftIcon(lift)}</span>
                                                 <span className="lift-label">{lift.label}</span>
+                                                {isDeadHangCard && (
+                                                    <div className="dead-hang-variant-switch" role="tablist" aria-label="Dead hang hand selection">
+                                                        {DEAD_HANG_VARIANTS.map((variant) => (
+                                                            <button
+                                                                key={variant.key}
+                                                                type="button"
+                                                                className={`dead-hang-variant-btn ${selectedDeadHangVariant === variant.key ? 'active' : ''}`}
+                                                                onClick={() => setSelectedDeadHangVariant(variant.key)}
+                                                            >
+                                                                {variant.label}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
 
                                                 <div
                                                     className="lift-value-display"
@@ -627,7 +719,7 @@ const StrengthTracker = () => {
                                                     <div className="unit-label">{valueDisplay.unitLabel}</div>
                                                 </div>
 
-                                                <button className="log-pr-btn" onClick={() => openLogModal(key)}>
+                                                <button className="log-pr-btn" onClick={() => openLogModal(key, isDeadHangCard ? selectedDeadHangVariant : 'both')}>
                                                     Log New PR
                                                 </button>
 
@@ -652,7 +744,9 @@ const StrengthTracker = () => {
                                                                     tickLine={false}
                                                                     axisLine={false}
                                                                     width={46}
+                                                                    allowDecimals={prMode !== 'rep'}
                                                                     tickFormatter={formatYAxisValue}
+                                                                    tickCount={prMode === 'rep' ? 6 : undefined}
                                                                 />
                                                                 <Tooltip
                                                                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
@@ -779,6 +873,23 @@ const StrengthTracker = () => {
                         </div>
 
                         <div className="lift-input-group">
+                            {isDeadHangLift(logLift, prMode) && (
+                                <div className="dead-hang-modal-variant-group">
+                                    <label style={{ fontSize: '0.8rem', color: '#666', fontWeight: 600 }}>Hand</label>
+                                    <div className="dead-hang-variant-switch dead-hang-variant-switch-modal" role="tablist" aria-label="Dead hang hand selection">
+                                        {DEAD_HANG_VARIANTS.map((variant) => (
+                                            <button
+                                                key={variant.key}
+                                                type="button"
+                                                className={`dead-hang-variant-btn ${logDeadHangVariant === variant.key ? 'active' : ''}`}
+                                                onClick={() => setLogDeadHangVariant(variant.key)}
+                                            >
+                                                {variant.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <label style={{ fontSize: '0.8rem', color: '#666', fontWeight: 600 }}>Date</label>
                             <input
                                 type="date"
@@ -884,6 +995,38 @@ const StrengthTracker = () => {
                             </div>
                         </div>
 
+                        {shouldShowDeadHangVariantFilter && (
+                            <div className="history-filter-row history-filter-row-variants">
+                                <div className="history-filter-scroll">
+                                    <button
+                                        onClick={() => setHistoryDeadHangVariantFilter('ALL')}
+                                        className="history-filter-pill"
+                                        style={{
+                                            border: historyDeadHangVariantFilter === 'ALL' ? 'none' : '1px solid #ddd',
+                                            background: historyDeadHangVariantFilter === 'ALL' ? '#0f766e' : 'white',
+                                            color: historyDeadHangVariantFilter === 'ALL' ? 'white' : '#666'
+                                        }}
+                                    >
+                                        All Hands
+                                    </button>
+                                    {DEAD_HANG_VARIANTS.map((variant) => (
+                                        <button
+                                            key={variant.key}
+                                            onClick={() => setHistoryDeadHangVariantFilter(variant.key)}
+                                            className="history-filter-pill"
+                                            style={{
+                                                border: historyDeadHangVariantFilter === variant.key ? 'none' : '1px solid #ddd',
+                                                background: historyDeadHangVariantFilter === variant.key ? '#0f766e' : 'white',
+                                                color: historyDeadHangVariantFilter === variant.key ? 'white' : '#666'
+                                            }}
+                                        >
+                                            {variant.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <div style={{ overflowY: 'auto', flex: 1 }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
                                 <thead>
@@ -905,7 +1048,14 @@ const StrengthTracker = () => {
                                                 {MODE_LABEL_LOOKUP[item.prMode] || item.prMode}
                                             </td>
                                             <td style={{ padding: '0.8rem 0.5rem', fontWeight: 600 }}>
-                                                {EXERCISE_LABEL_LOOKUP[item.lift] || item.lift}
+                                                <div className="strength-history-exercise-cell">
+                                                    <span>{EXERCISE_LABEL_LOOKUP[item.lift] || item.lift}</span>
+                                                    {isDeadHangLift(item.lift, item.prMode) && (
+                                                        <span className="strength-history-variant-badge">
+                                                            {getDeadHangVariantLabel(item.deadHangVariant)}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td style={{ padding: '0.8rem 0.5rem', fontWeight: 700, color: '#395aff' }}>
                                                 {formatHistoryRecord(item)}

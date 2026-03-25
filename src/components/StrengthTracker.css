@@ -129,6 +129,47 @@
     display: block;
 }
 
+.dead-hang-variant-switch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    padding: 0.2rem;
+    border-radius: 999px;
+    background: rgba(57, 90, 255, 0.08);
+    border: 1px solid rgba(57, 90, 255, 0.12);
+    margin-bottom: 0.85rem;
+}
+
+.dead-hang-variant-switch-modal {
+    width: 100%;
+}
+
+.dead-hang-variant-btn {
+    border: none;
+    background: transparent;
+    color: #5b6780;
+    border-radius: 999px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.dead-hang-variant-btn.active {
+    background: #395aff;
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(57, 90, 255, 0.18);
+}
+
+.dead-hang-modal-variant-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    width: 100%;
+}
+
 .lift-value-display {
     font-size: 1.75rem;
     font-weight: 700;
@@ -543,6 +584,10 @@
     justify-content: flex-start;
 }
 
+.history-filter-row-variants {
+    justify-content: flex-start;
+}
+
 .history-filter-scroll {
     display: flex;
     gap: 0.5rem;
@@ -580,6 +625,27 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+}
+
+.strength-history-exercise-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+
+.strength-history-variant-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(15, 118, 110, 0.1);
+    border: 1px solid rgba(15, 118, 110, 0.18);
+    color: #0f766e;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.1;
 }
 
 .history-btn:hover {

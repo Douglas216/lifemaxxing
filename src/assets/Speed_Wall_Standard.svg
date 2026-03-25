@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="959" height="593" viewBox="0 0 959 593" role="img" aria-labelledby="title desc">
+  <title id="title">Standard IFSC Speed Climbing Wall</title>
+  <desc id="desc">Diagram showing a standardized 15 meter speed wall with two identical lanes, 5 degree overhang, and world record notes.</desc>
+
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; }
+      .lane { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 2; }
+      .hold-hand { fill: #ef4444; }
+      .hold-foot { fill: #f59e0b; }
+      .start { fill: #bfdbfe; stroke: #3b82f6; stroke-width: 1.5; }
+      .finish { fill: #dcfce7; stroke: #22c55e; stroke-width: 1.5; }
+      .label { font-family: Arial, sans-serif; fill: #1f2937; }
+      .sub { font-family: Arial, sans-serif; fill: #475569; }
+      .dim { stroke: #334155; stroke-width: 2; marker-start: url(#arrow); marker-end: url(#arrow); }
+      .callout { stroke: #334155; stroke-width: 2; marker-end: url(#arrow); }
+      .legend-box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#334155" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="959" height="593" />
+  <rect class="panel" x="18" y="18" width="923" height="557" rx="16" />
+
+  <text class="label" x="42" y="60" font-size="36" font-weight="700">Standard IFSC Speed Wall</text>
+  <text class="sub" x="42" y="94" font-size="22">Two identical lanes on the same fixed 15 m route</text>
+
+  <g id="lane" transform="translate(250,110)">
+    <rect class="lane" x="0" y="0" width="170" height="430" rx="8" />
+
+    <rect class="finish" x="53" y="14" width="64" height="18" rx="6" />
+    <rect class="start" x="58" y="395" width="54" height="18" rx="6" />
+
+    <circle class="hold-hand" cx="85" cy="366" r="7" />
+    <circle class="hold-hand" cx="63" cy="348" r="7" />
+    <circle class="hold-hand" cx="108" cy="332" r="7" />
+    <circle class="hold-hand" cx="74" cy="312" r="7" />
+    <circle class="hold-hand" cx="115" cy="294" r="7" />
+    <circle class="hold-hand" cx="80" cy="276" r="7" />
+    <circle class="hold-hand" cx="120" cy="258" r="7" />
+    <circle class="hold-hand" cx="83" cy="240" r="7" />
+    <circle class="hold-hand" cx="123" cy="222" r="7" />
+    <circle class="hold-hand" cx="86" cy="204" r="7" />
+    <circle class="hold-hand" cx="126" cy="186" r="7" />
+    <circle class="hold-hand" cx="90" cy="168" r="7" />
+    <circle class="hold-hand" cx="129" cy="150" r="7" />
+    <circle class="hold-hand" cx="95" cy="132" r="7" />
+    <circle class="hold-hand" cx="131" cy="114" r="7" />
+    <circle class="hold-hand" cx="98" cy="97" r="7" />
+    <circle class="hold-hand" cx="132" cy="80" r="7" />
+    <circle class="hold-hand" cx="102" cy="63" r="7" />
+    <circle class="hold-hand" cx="133" cy="48" r="7" />
+    <circle class="hold-hand" cx="106" cy="35" r="7" />
+
+    <circle class="hold-foot" cx="48" cy="377" r="5" />
+    <circle class="hold-foot" cx="122" cy="354" r="5" />
+    <circle class="hold-foot" cx="56" cy="330" r="5" />
+    <circle class="hold-foot" cx="128" cy="304" r="5" />
+    <circle class="hold-foot" cx="60" cy="278" r="5" />
+    <circle class="hold-foot" cx="132" cy="252" r="5" />
+    <circle class="hold-foot" cx="63" cy="226" r="5" />
+    <circle class="hold-foot" cx="136" cy="198" r="5" />
+    <circle class="hold-foot" cx="68" cy="169" r="5" />
+    <circle class="hold-foot" cx="138" cy="139" r="5" />
+    <circle class="hold-foot" cx="72" cy="108" r="5" />
+  </g>
+
+  <use href="#lane" transform="translate(270,0)" />
+
+  <text class="label" x="318" y="560" font-size="22" font-weight="700">Lane A</text>
+  <text class="label" x="588" y="560" font-size="22" font-weight="700">Lane B</text>
+
+  <line class="dim" x1="220" y1="114" x2="220" y2="536" />
+  <text class="label" x="194" y="328" font-size="24" font-weight="700" transform="rotate(-90 194 328)">15 m</text>
+
+  <line class="callout" x1="430" y1="110" x2="470" y2="70" />
+  <text class="label" x="478" y="72" font-size="22" font-weight="700">5 deg overhang</text>
+
+  <rect class="legend-box" x="44" y="428" width="176" height="112" rx="10" />
+  <circle class="hold-hand" cx="70" cy="462" r="7" />
+  <text class="sub" x="88" y="468" font-size="18">20 handholds</text>
+  <circle class="hold-foot" cx="70" cy="494" r="5" />
+  <text class="sub" x="88" y="500" font-size="18">11 footholds</text>
+  <rect class="start" x="63" y="516" width="14" height="10" rx="3" />
+  <text class="sub" x="88" y="525" font-size="18">Start / finish pads</text>
+
+  <rect class="legend-box" x="666" y="430" width="253" height="110" rx="10" />
+  <text class="label" x="682" y="458" font-size="17" font-weight="700">World records (as of Mar 6, 2026)</text>
+  <text class="sub" x="682" y="484" font-size="16">Men: 4.64s - Samuel Watson (USA)</text>
+  <text class="sub" x="682" y="506" font-size="16">Women: 6.03s - Aleksandra Miroslaw (POL)</text>
+  <text class="sub" x="682" y="528" font-size="14">IFSC standardized speed format</text>
+</svg>

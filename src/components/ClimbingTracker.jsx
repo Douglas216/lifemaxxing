@@ -31,6 +31,7 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase';
 import blankUsMap from '../assets/Blank_US_Map_(states_only).svg';
 import ydsUsMap from '../assets/YDS_US_Map_Yosemite.svg';
+import speedWallStandard from '../assets/Speed_Wall_Standard.svg';
 import './ClimbingTracker.css';
 
 const V_GRADES = ['VB', 'V0', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17'];
@@ -88,7 +89,7 @@ const getGradesForType = (type) => {
     return YDS_GRADES;
 };
 
-const supportsGradeTooltip = (type) => type === 'boulder' || type === 'top_rope' || type === 'lead';
+const supportsDisciplineTooltip = (type) => type === 'boulder' || type === 'top_rope' || type === 'lead' || type === 'speed';
 
 const getPreferredCountryCode = () => {
     if (typeof navigator === 'undefined') return 'us';
@@ -154,6 +155,76 @@ const getGymLabel = (session) => {
     if (!name) return 'No gym';
     const city = getGymCityFromAddress(session.gymAddress);
     return city ? `${name}, ${city}` : name;
+};
+
+const getGymLocationSnippet = (session) => {
+    const nickname = typeof session.gymNickname === 'string' ? session.gymNickname.trim() : '';
+    const name = typeof session.gymName === 'string' ? session.gymName.trim() : '';
+    const address = typeof session.gymAddress === 'string' ? session.gymAddress.trim() : '';
+    const city = getGymCityFromAddress(address);
+
+    if (nickname) {
+        if (name && city) return `${name}, ${city}`;
+        return name || city || address;
+    }
+
+    return address || city;
+};
+
+const normalizeGymGroupPart = (value) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
+
+const getSessionGymGroupKey = (session) => {
+    const placeId = typeof session?.gymPlaceId === 'string' ? session.gymPlaceId.trim() : '';
+    if (placeId) return `place:${placeId}`;
+
+    const name = normalizeGymGroupPart(session?.gymName);
+    const address = normalizeGymGroupPart(session?.gymAddress);
+    if (!name && !address) return '';
+
+    return `fallback:${name}|${address}`;
+};
+
+const getClimbType = (climb, session) => {
+    if (typeof climb?.type === 'string' && climb.type.trim()) return climb.type.trim();
+    if (typeof session?.type === 'string' && session.type.trim()) return session.type.trim();
+    return 'boulder';
+};
+
+const getVisitGroupKey = (session) => {
+    const dateKey = session?.dateKey || getDateKeyFromTimestamp(session?.timestamp);
+    const gymKey = getSessionGymGroupKey(session);
+    if (gymKey) return `${dateKey}|${gymKey}`;
+    return `${dateKey}|session:${session?.id || hashString(JSON.stringify(session || {}))}`;
+};
+
+const getDisciplineLabel = (type) => {
+    if (type === 'top_rope') return 'Top Rope';
+    if (type === 'lead') return 'Lead';
+    if (type === 'speed') return 'Speed';
+    return 'Bouldering';
+};
+
+const DISCIPLINE_ORDER = ['boulder', 'top_rope', 'lead', 'speed'];
+
+const buildSavedGymSuggestion = (gym) => {
+    const nickname = typeof gym?.nickname === 'string' ? gym.nickname.trim() : '';
+    const name = typeof gym?.gymName === 'string' ? gym.gymName.trim() : '';
+    const address = typeof gym?.gymAddress === 'string' ? gym.gymAddress.trim() : '';
+
+    return {
+        placeId: gym?.placeId || '',
+        description: nickname ? `${nickname}${name ? ` - ${name}` : ''}` : name,
+        primaryText: nickname || name || 'Saved gym',
+        secondaryText: nickname ? (name || address) : address,
+        isSavedGym: true,
+        savedGym: {
+            placeId: gym?.placeId || '',
+            name,
+            address,
+            lat: Number.isFinite(gym?.lat) ? gym.lat : null,
+            lng: Number.isFinite(gym?.lng) ? gym.lng : null
+        }
+    };
 };
 
 const buildGymPayload = (gym, nickname = '') => {
@@ -243,6 +314,7 @@ const buildLegacySessionCards = (legacyClimbs) => {
 
         group.climbs.push({
             id: climb.id,
+            type,
             grade: climb.grade ?? null,
             time: Number.isFinite(Number.parseFloat(climb.time)) ? Number.parseFloat(climb.time) : null,
             remark: typeof climb.remark === 'string' ? climb.remark : '',
@@ -296,6 +368,8 @@ const ClimbingTracker = () => {
     const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [showEditSessionModal, setShowEditSessionModal] = useState(false);
     const [showEditClimbModal, setShowEditClimbModal] = useState(false);
+    const [historyView, setHistoryView] = useState('sessions');
+    const [selectedHistoryGymKey, setSelectedHistoryGymKey] = useState('');
 
     const [sessionsBase, setSessionsBase] = useState([]);
     const [climbsBySession, setClimbsBySession] = useState({});
@@ -317,6 +391,7 @@ const ClimbingTracker = () => {
     const [logSessionNote, setLogSessionNote] = useState('');
 
     const [gymNicknameMap, setGymNicknameMap] = useState({});
+    const [savedGymsByPlaceId, setSavedGymsByPlaceId] = useState({});
 
     const [gymQuery, setGymQuery] = useState('');
     const [gymSuggestions, setGymSuggestions] = useState([]);
@@ -345,6 +420,7 @@ const ClimbingTracker = () => {
     const [editClimbRemark, setEditClimbRemark] = useState('');
     const [editClimbError, setEditClimbError] = useState('');
     const [isSavingClimb, setIsSavingClimb] = useState(false);
+    const [expandedTextFields, setExpandedTextFields] = useState({});
 
     const [placesReady, setPlacesReady] = useState(false);
     const [placesLoading, setPlacesLoading] = useState(false);
@@ -380,7 +456,7 @@ const ClimbingTracker = () => {
         setSelectedGrade(getDefaultGradeByType(climbType));
         setBulkCounts(createBulkCounts(climbType));
         if (climbType === 'speed') setLogMode('single');
-        if (!supportsGradeTooltip(climbType)) setShowGradeTooltip(false);
+        if (!supportsDisciplineTooltip(climbType)) setShowGradeTooltip(false);
     }, [climbType]);
 
     const updateGradeTooltipPosition = () => {
@@ -419,19 +495,31 @@ const ClimbingTracker = () => {
     useEffect(() => {
         if (!user) {
             setGymNicknameMap({});
+            setSavedGymsByPlaceId({});
             return undefined;
         }
 
         const nicknamesRef = collection(db, 'users', user.uid, 'gym_nicknames');
         const unsub = onSnapshot(nicknamesRef, (snapshot) => {
             const nextMap = {};
+            const nextSavedGyms = {};
             snapshot.docs.forEach((snapshotDoc) => {
                 const data = snapshotDoc.data() || {};
                 if (typeof data.placeId === 'string' && typeof data.nickname === 'string' && data.nickname.trim()) {
-                    nextMap[data.placeId] = data.nickname.trim();
+                    const trimmedNickname = data.nickname.trim();
+                    nextMap[data.placeId] = trimmedNickname;
+                    nextSavedGyms[data.placeId] = {
+                        placeId: data.placeId,
+                        nickname: trimmedNickname,
+                        gymName: typeof data.gymName === 'string' ? data.gymName : '',
+                        gymAddress: typeof data.gymAddress === 'string' ? data.gymAddress : '',
+                        lat: Number.isFinite(data.gymLat) ? data.gymLat : null,
+                        lng: Number.isFinite(data.gymLng) ? data.gymLng : null
+                    };
                 }
             });
             setGymNicknameMap(nextMap);
+            setSavedGymsByPlaceId(nextSavedGyms);
         });
 
         return () => unsub();
@@ -455,6 +543,8 @@ const ClimbingTracker = () => {
                     nickname: trimmedNickname,
                     gymName: gym.name || '',
                     gymAddress: gym.address || '',
+                    gymLat: Number.isFinite(gym.lat) ? gym.lat : null,
+                    gymLng: Number.isFinite(gym.lng) ? gym.lng : null,
                     updatedAt: serverTimestamp()
                 },
                 { merge: true }
@@ -463,6 +553,16 @@ const ClimbingTracker = () => {
             console.warn('Could not store gym nickname mapping:', error);
         }
     };
+
+    const savedGymSuggestions = useMemo(() => {
+        return Object.values(savedGymsByPlaceId)
+            .filter((gym) => gym?.placeId)
+            .sort((a, b) => {
+                const aLabel = (a.nickname || a.gymName || '').trim();
+                const bLabel = (b.nickname || b.gymName || '').trim();
+                return aLabel.localeCompare(bLabel, undefined, { sensitivity: 'base' });
+            });
+    }, [savedGymsByPlaceId]);
 
     useEffect(() => {
         if (!user) {
@@ -606,11 +706,186 @@ const ClimbingTracker = () => {
         return buildLegacySessionCards(legacyClimbs);
     }, [migrationCompleted, sessionsBase, climbsBySession, legacyClimbs]);
 
-    const historySessions = useMemo(() => {
-        return activeSessions
-            .filter((session) => (session.type || 'boulder') === climbType)
+    const activeVisits = useMemo(() => {
+        const grouped = new Map();
+
+        activeSessions.forEach((session) => {
+            const visitKey = getVisitGroupKey(session);
+            const sessionTimestamp = Number.isFinite(session.timestamp) ? session.timestamp : Date.now();
+            const sessionNotes = typeof session.sessionNote === 'string' ? session.sessionNote.trim() : '';
+
+            if (!grouped.has(visitKey)) {
+                grouped.set(visitKey, {
+                    id: visitKey,
+                    dateKey: session.dateKey || getDateKeyFromTimestamp(sessionTimestamp),
+                    timestamp: sessionTimestamp,
+                    gymPlaceId: session.gymPlaceId || '',
+                    gymName: session.gymName || '',
+                    gymAddress: session.gymAddress || '',
+                    gymLat: Number.isFinite(session.gymLat) ? session.gymLat : null,
+                    gymLng: Number.isFinite(session.gymLng) ? session.gymLng : null,
+                    gymNickname: session.gymNickname || '',
+                    sessionNote: '',
+                    legacy: Boolean(session.legacy),
+                    sourceSessionIds: [],
+                    disciplines: new Set(),
+                    sessionNotes: new Set(),
+                    climbs: []
+                });
+            }
+
+            const visit = grouped.get(visitKey);
+            visit.timestamp = Math.max(visit.timestamp, sessionTimestamp);
+            visit.legacy = visit.legacy || Boolean(session.legacy);
+            visit.sourceSessionIds.push(session.id);
+
+            if (!visit.gymPlaceId && session.gymPlaceId) visit.gymPlaceId = session.gymPlaceId;
+            if (!visit.gymName && session.gymName) visit.gymName = session.gymName;
+            if (!visit.gymAddress && session.gymAddress) visit.gymAddress = session.gymAddress;
+            if (!Number.isFinite(visit.gymLat) && Number.isFinite(session.gymLat)) visit.gymLat = session.gymLat;
+            if (!Number.isFinite(visit.gymLng) && Number.isFinite(session.gymLng)) visit.gymLng = session.gymLng;
+
+            const nextNickname = typeof session.gymNickname === 'string' ? session.gymNickname.trim() : '';
+            if (nextNickname && !visit.gymNickname) {
+                visit.gymNickname = nextNickname;
+            }
+
+            if (sessionNotes) {
+                visit.sessionNotes.add(sessionNotes);
+            }
+
+            (session.climbs || []).forEach((climb) => {
+                const climbTypeValue = getClimbType(climb, session);
+                visit.disciplines.add(climbTypeValue);
+                visit.climbs.push({
+                    ...climb,
+                    type: climbTypeValue,
+                    sessionId: session.id,
+                    legacy: Boolean(climb.legacy || session.legacy),
+                    sessionTimestamp
+                });
+            });
+        });
+
+        return Array.from(grouped.values())
+            .map((visit) => {
+                const sortedClimbs = [...visit.climbs].sort((a, b) => {
+                    const orderDiff = (a.order ?? 0) - (b.order ?? 0);
+                    if (orderDiff !== 0) return orderDiff;
+                    const timeDiff = (a.sessionTimestamp || 0) - (b.sessionTimestamp || 0);
+                    if (timeDiff !== 0) return timeDiff;
+                    return String(a.id).localeCompare(String(b.id));
+                });
+                const notes = Array.from(visit.sessionNotes);
+                return {
+                    ...visit,
+                    type: sortedClimbs[0]?.type || 'boulder',
+                    disciplines: DISCIPLINE_ORDER.filter((type) => visit.disciplines.has(type)),
+                    sessionNote: notes.join(' • '),
+                    climbs: sortedClimbs
+                };
+            })
             .sort((a, b) => b.timestamp - a.timestamp);
-    }, [activeSessions, climbType]);
+    }, [activeSessions]);
+
+    const historyVisits = useMemo(() => {
+        return activeVisits
+            .sort((a, b) => b.timestamp - a.timestamp);
+    }, [activeVisits]);
+
+    const disciplineHistoryVisits = useMemo(() => {
+        return activeVisits
+            .filter((visit) => visit.climbs.some((climb) => climb.type === climbType))
+            .sort((a, b) => b.timestamp - a.timestamp);
+    }, [activeVisits, climbType]);
+
+    const gymSummaries = useMemo(() => {
+        const grouped = new Map();
+
+        activeVisits.forEach((visit) => {
+            const gymKey = getSessionGymGroupKey(visit);
+            if (!gymKey) return;
+
+            const visitTimestamp = Number.isFinite(visit.timestamp) ? visit.timestamp : Date.now();
+            const visitClimbCount = Array.isArray(visit.climbs) ? visit.climbs.length : 0;
+
+            if (!grouped.has(gymKey)) {
+                grouped.set(gymKey, {
+                    key: gymKey,
+                    gymPlaceId: visit.gymPlaceId || '',
+                    gymName: visit.gymName || '',
+                    gymAddress: visit.gymAddress || '',
+                    gymNickname: visit.gymNickname || '',
+                    displayLabel: getGymLabel(visit),
+                    locationSnippet: getGymLocationSnippet(visit),
+                    visitCount: 0,
+                    climbCount: 0,
+                    firstVisitTimestamp: visitTimestamp,
+                    lastVisitTimestamp: visitTimestamp,
+                    disciplines: new Set()
+                });
+            }
+
+            const summary = grouped.get(gymKey);
+            summary.visitCount += 1;
+            summary.climbCount += visitClimbCount;
+            visit.disciplines.forEach((type) => summary.disciplines.add(type));
+            summary.firstVisitTimestamp = Math.min(summary.firstVisitTimestamp, visitTimestamp);
+            summary.lastVisitTimestamp = Math.max(summary.lastVisitTimestamp, visitTimestamp);
+
+            if (!summary.gymPlaceId && visit.gymPlaceId) summary.gymPlaceId = visit.gymPlaceId;
+            if (!summary.gymName && visit.gymName) summary.gymName = visit.gymName;
+            if (!summary.gymAddress && visit.gymAddress) summary.gymAddress = visit.gymAddress;
+
+            const nextNickname = typeof visit.gymNickname === 'string' ? visit.gymNickname.trim() : '';
+            if (nextNickname && !summary.gymNickname) {
+                summary.gymNickname = nextNickname;
+                summary.displayLabel = getGymLabel(visit);
+            } else if (!summary.displayLabel || summary.displayLabel === 'No gym') {
+                summary.displayLabel = getGymLabel(visit);
+            }
+
+            if (!summary.locationSnippet) {
+                summary.locationSnippet = getGymLocationSnippet(visit);
+            }
+        });
+
+        return Array.from(grouped.values())
+            .map((summary) => ({
+                ...summary,
+                disciplines: DISCIPLINE_ORDER.filter((type) => summary.disciplines.has(type))
+            }))
+            .sort((a, b) => {
+                const aPrimary = (typeof a.gymNickname === 'string' && a.gymNickname.trim())
+                    || (typeof a.gymName === 'string' && a.gymName.trim())
+                    || a.displayLabel
+                    || '';
+                const bPrimary = (typeof b.gymNickname === 'string' && b.gymNickname.trim())
+                    || (typeof b.gymName === 'string' && b.gymName.trim())
+                    || b.displayLabel
+                    || '';
+
+                const primaryCompare = aPrimary.localeCompare(bPrimary, undefined, { sensitivity: 'base' });
+                if (primaryCompare !== 0) return primaryCompare;
+
+                const aSecondary = a.displayLabel || '';
+                const bSecondary = b.displayLabel || '';
+                const secondaryCompare = aSecondary.localeCompare(bSecondary, undefined, { sensitivity: 'base' });
+                if (secondaryCompare !== 0) return secondaryCompare;
+
+                return a.key.localeCompare(b.key, undefined, { sensitivity: 'base' });
+            });
+    }, [activeVisits]);
+
+    const filteredHistoryVisits = useMemo(() => {
+        if (!selectedHistoryGymKey) return historyVisits;
+        return historyVisits.filter((visit) => getSessionGymGroupKey(visit) === selectedHistoryGymKey);
+    }, [historyVisits, selectedHistoryGymKey]);
+
+    const selectedHistoryGymSummary = useMemo(() => {
+        if (!selectedHistoryGymKey) return null;
+        return gymSummaries.find((summary) => summary.key === selectedHistoryGymKey) || null;
+    }, [gymSummaries, selectedHistoryGymKey]);
 
     const chartData = useMemo(() => {
         const now = Date.now();
@@ -619,19 +894,21 @@ const ClimbingTracker = () => {
         if (timeRange === '1M') cutoff = now - 30 * 24 * 60 * 60 * 1000;
         if (timeRange === '1Y') cutoff = now - 365 * 24 * 60 * 60 * 1000;
 
-        const filteredSessions = historySessions.filter((session) => session.timestamp >= cutoff);
+        const filteredVisits = disciplineHistoryVisits.filter((visit) => visit.timestamp >= cutoff);
 
         if (climbType === 'speed') {
             const points = [];
-            filteredSessions
+            filteredVisits
                 .sort((a, b) => a.timestamp - b.timestamp)
-                .forEach((session) => {
-                    session.climbs.forEach((climb, index) => {
+                .forEach((visit) => {
+                    visit.climbs
+                        .filter((climb) => climb.type === 'speed')
+                        .forEach((climb, index) => {
                         const time = Number.parseFloat(climb.time);
                         if (!Number.isFinite(time) || time <= 0) return;
                         points.push({
-                            id: `${session.id}_${climb.id}`,
-                            timestamp: session.timestamp + index,
+                            id: `${visit.id}_${climb.sessionId}_${climb.id}`,
+                            timestamp: visit.timestamp + index,
                             time
                         });
                     });
@@ -645,8 +922,9 @@ const ClimbingTracker = () => {
             return acc;
         }, {});
 
-        filteredSessions.forEach((session) => {
-            session.climbs.forEach((climb) => {
+        filteredVisits.forEach((visit) => {
+            visit.climbs.forEach((climb) => {
+                if (climb.type !== climbType) return;
                 if (typeof climb.grade === 'string' && counts[climb.grade] !== undefined) {
                     counts[climb.grade] += 1;
                 }
@@ -654,7 +932,7 @@ const ClimbingTracker = () => {
         });
 
         return grades.map((grade) => ({ grade, count: counts[grade] || 0 })).filter((item) => item.count > 0 || timeRange === 'ALL');
-    }, [historySessions, timeRange, climbType]);
+    }, [disciplineHistoryVisits, timeRange, climbType]);
 
     const totalBulkClimbs = useMemo(() => {
         return Object.values(bulkCounts).reduce((sum, value) => {
@@ -724,8 +1002,7 @@ const ClimbingTracker = () => {
     }, [isGymLookupActive, showLogModal, showEditSessionModal]);
 
     useEffect(() => {
-        if (!showLogModal || !placesReady || !autocompleteServiceRef.current) return;
-
+        if (!showLogModal) return;
         const queryText = gymQuery.trim();
         if (queryText.length < 2) {
             setGymSuggestions([]);
@@ -733,8 +1010,24 @@ const ClimbingTracker = () => {
             return;
         }
 
-        if (selectedGym && queryText === selectedGym.name) {
+        if (selectedGym && (queryText === selectedGym.name || queryText === gymNickname)) {
             setGymSuggestions([]);
+            setGymLoading(false);
+            return;
+        }
+
+        const normalizedQuery = queryText.toLowerCase();
+        const localSuggestions = savedGymSuggestions
+            .filter((gym) => {
+                const nickname = (gym.nickname || '').trim().toLowerCase();
+                const name = (gym.gymName || '').trim().toLowerCase();
+                const address = (gym.gymAddress || '').trim().toLowerCase();
+                return nickname.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery);
+            })
+            .map(buildSavedGymSuggestion);
+
+        if (!placesReady || !autocompleteServiceRef.current) {
+            setGymSuggestions(localSuggestions);
             setGymLoading(false);
             return;
         }
@@ -767,7 +1060,9 @@ const ClimbingTracker = () => {
                 if (status === placesStatus.OK && predictions?.length) {
                     setGymLoading(false);
                     setGymError('');
-                    setGymSuggestions(mapPredictions(predictions));
+                    const mappedPredictions = mapPredictions(predictions)
+                        .filter((prediction) => !localSuggestions.some((local) => local.placeId === prediction.placeId));
+                    setGymSuggestions([...localSuggestions, ...mappedPredictions]);
                     return;
                 }
 
@@ -781,12 +1076,12 @@ const ClimbingTracker = () => {
 
                 setGymLoading(false);
                 if (status === placesStatus.ZERO_RESULTS) {
-                    setGymSuggestions([]);
+                    setGymSuggestions(localSuggestions);
                     setGymError('');
                     return;
                 }
 
-                setGymSuggestions([]);
+                setGymSuggestions(localSuggestions);
                 setGymError('Could not load gym suggestions. You can still save without a gym.');
             };
 
@@ -801,11 +1096,10 @@ const ClimbingTracker = () => {
         }, 180);
 
         return () => clearTimeout(timeoutId);
-    }, [gymQuery, placesReady, selectedGym, showLogModal]);
+    }, [gymNickname, gymQuery, placesReady, savedGymSuggestions, selectedGym, showLogModal]);
 
     useEffect(() => {
-        if (!showEditSessionModal || !placesReady || !autocompleteServiceRef.current) return;
-
+        if (!showEditSessionModal) return;
         const queryText = editGymQuery.trim();
         if (queryText.length < 2) {
             setEditGymSuggestions([]);
@@ -813,8 +1107,24 @@ const ClimbingTracker = () => {
             return;
         }
 
-        if (editSelectedGym && queryText === editSelectedGym.name) {
+        if (editSelectedGym && (queryText === editSelectedGym.name || queryText === editGymNickname)) {
             setEditGymSuggestions([]);
+            setEditGymLoading(false);
+            return;
+        }
+
+        const normalizedQuery = queryText.toLowerCase();
+        const localSuggestions = savedGymSuggestions
+            .filter((gym) => {
+                const nickname = (gym.nickname || '').trim().toLowerCase();
+                const name = (gym.gymName || '').trim().toLowerCase();
+                const address = (gym.gymAddress || '').trim().toLowerCase();
+                return nickname.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery);
+            })
+            .map(buildSavedGymSuggestion);
+
+        if (!placesReady || !autocompleteServiceRef.current) {
+            setEditGymSuggestions(localSuggestions);
             setEditGymLoading(false);
             return;
         }
@@ -847,7 +1157,9 @@ const ClimbingTracker = () => {
                 if (status === placesStatus.OK && predictions?.length) {
                     setEditGymLoading(false);
                     setEditGymError('');
-                    setEditGymSuggestions(mapPredictions(predictions));
+                    const mappedPredictions = mapPredictions(predictions)
+                        .filter((prediction) => !localSuggestions.some((local) => local.placeId === prediction.placeId));
+                    setEditGymSuggestions([...localSuggestions, ...mappedPredictions]);
                     return;
                 }
 
@@ -861,12 +1173,12 @@ const ClimbingTracker = () => {
 
                 setEditGymLoading(false);
                 if (status === placesStatus.ZERO_RESULTS) {
-                    setEditGymSuggestions([]);
+                    setEditGymSuggestions(localSuggestions);
                     setEditGymError('');
                     return;
                 }
 
-                setEditGymSuggestions([]);
+                setEditGymSuggestions(localSuggestions);
                 setEditGymError('Could not load gym suggestions. Please try again.');
             };
 
@@ -881,7 +1193,7 @@ const ClimbingTracker = () => {
         }, 180);
 
         return () => clearTimeout(timeoutId);
-    }, [editGymQuery, editSelectedGym, placesReady, showEditSessionModal]);
+    }, [editGymNickname, editGymQuery, editSelectedGym, placesReady, savedGymSuggestions, showEditSessionModal]);
 
     useEffect(() => {
         return () => {
@@ -892,6 +1204,21 @@ const ClimbingTracker = () => {
     }, []);
 
     const resolveGymSuggestion = (suggestion, setLoading, setSelected, setQuery, setSuggestions, setError, setNickname) => {
+        if (suggestion?.isSavedGym && suggestion.savedGym) {
+            setSelected({
+                placeId: suggestion.savedGym.placeId || '',
+                name: suggestion.savedGym.name || suggestion.primaryText || '',
+                address: suggestion.savedGym.address || '',
+                lat: Number.isFinite(suggestion.savedGym.lat) ? suggestion.savedGym.lat : null,
+                lng: Number.isFinite(suggestion.savedGym.lng) ? suggestion.savedGym.lng : null
+            });
+            setNickname(getRememberedNickname(suggestion.savedGym.placeId || ''));
+            setQuery(suggestion.savedGym.name || suggestion.primaryText || '');
+            setSuggestions([]);
+            setError('');
+            return;
+        }
+
         if (!suggestion?.placeId || !placesServiceRef.current || !window.google?.maps?.places) {
             setSelected({
                 placeId: suggestion?.placeId || '',
@@ -1066,6 +1393,7 @@ const ClimbingTracker = () => {
 
                 const climbPayloads = sortedClimbs.map((climb, index) => {
                     const payload = {
+                        type: climb.type || rep.type || 'boulder',
                         grade: climb.grade ?? null,
                         time: Number.isFinite(Number.parseFloat(climb.time)) ? Number.parseFloat(climb.time) : null,
                         order: index,
@@ -1143,6 +1471,7 @@ const ClimbingTracker = () => {
         setBulkCounts(createBulkCounts(climbType));
         setLogRouteRemark('');
         setLogSessionNote('');
+        setExpandedTextFields({});
         resetLogGymState();
     };
 
@@ -1199,6 +1528,7 @@ const ClimbingTracker = () => {
                 if (entries.length === 0) return;
 
                 const climbPayloads = entries.map((grade, index) => ({
+                    type: climbType,
                     grade,
                     time: null,
                     order: index,
@@ -1213,6 +1543,7 @@ const ClimbingTracker = () => {
 
                 const trimmedRouteRemark = logRouteRemark.trim();
                 const climbPayload = {
+                    type: climbType,
                     grade: climbType === 'speed' ? null : selectedGrade,
                     time: climbType === 'speed' ? parsedSpeedTime : null,
                     order: 0,
@@ -1268,6 +1599,11 @@ const ClimbingTracker = () => {
         setEditSessionDate(getLocalToday());
         setEditSessionNote('');
         setIsSavingSession(false);
+        setExpandedTextFields((prev) => {
+            const next = { ...prev };
+            delete next.editSessionNote;
+            return next;
+        });
         resetEditSessionGymState();
     };
 
@@ -1313,7 +1649,14 @@ const ClimbingTracker = () => {
         setEditGymError('');
 
         try {
-            await updateDoc(doc(db, 'users', user.uid, 'climbing_sessions', editingSession.id), payload);
+            const sessionIds = Array.isArray(editingSession.sourceSessionIds) && editingSession.sourceSessionIds.length > 0
+                ? editingSession.sourceSessionIds
+                : [editingSession.id];
+            const batch = writeBatch(db);
+            sessionIds.forEach((sessionId) => {
+                batch.update(doc(db, 'users', user.uid, 'climbing_sessions', sessionId), payload);
+            });
+            await batch.commit();
             closeEditSessionModal();
         } catch (error) {
             console.error('Session edit failed:', error);
@@ -1355,6 +1698,11 @@ const ClimbingTracker = () => {
         setEditClimbRemark('');
         setEditClimbError('');
         setIsSavingClimb(false);
+        setExpandedTextFields((prev) => {
+            const next = { ...prev };
+            delete next.editClimbRemark;
+            return next;
+        });
     };
 
     const handleSaveClimbEdit = async () => {
@@ -1379,6 +1727,7 @@ const ClimbingTracker = () => {
             payload.time = null;
         }
 
+        payload.type = editingClimbType;
         const trimmedRemark = editClimbRemark.trim();
         if (trimmedRemark) {
             payload.remark = trimmedRemark;
@@ -1418,19 +1767,25 @@ const ClimbingTracker = () => {
             setShowMigrationModal(true);
             return;
         }
-        if (!window.confirm('Delete this session and all climbs in it?')) return;
+        if (!window.confirm('Delete this visit and all climbs in it?')) return;
 
         try {
-            const climbs = climbsBySession[session.id] || [];
-            for (let start = 0; start < climbs.length; start += BATCH_CHUNK_SIZE) {
-                const batch = writeBatch(db);
-                const chunk = climbs.slice(start, start + BATCH_CHUNK_SIZE);
-                chunk.forEach((climb) => {
-                    batch.delete(doc(db, 'users', user.uid, 'climbing_sessions', session.id, 'climbs', climb.id));
-                });
-                await batch.commit();
+            const sessionIds = Array.isArray(session.sourceSessionIds) && session.sourceSessionIds.length > 0
+                ? session.sourceSessionIds
+                : [session.id];
+
+            for (const sessionId of sessionIds) {
+                const climbs = climbsBySession[sessionId] || [];
+                for (let start = 0; start < climbs.length; start += BATCH_CHUNK_SIZE) {
+                    const batch = writeBatch(db);
+                    const chunk = climbs.slice(start, start + BATCH_CHUNK_SIZE);
+                    chunk.forEach((climb) => {
+                        batch.delete(doc(db, 'users', user.uid, 'climbing_sessions', sessionId, 'climbs', climb.id));
+                    });
+                    await batch.commit();
+                }
+                await deleteDoc(doc(db, 'users', user.uid, 'climbing_sessions', sessionId));
             }
-            await deleteDoc(doc(db, 'users', user.uid, 'climbing_sessions', session.id));
         } catch (error) {
             console.error('Delete session failed:', error);
         }
@@ -1438,8 +1793,51 @@ const ClimbingTracker = () => {
 
     const closeHistoryModal = () => {
         setShowHistoryModal(false);
+        setHistoryView('sessions');
+        setSelectedHistoryGymKey('');
         closeEditSessionModal();
         closeEditClimbModal();
+    };
+
+    const openHistoryModal = () => {
+        setHistoryView('sessions');
+        setSelectedHistoryGymKey('');
+        setShowHistoryModal(true);
+    };
+
+    const handleViewGymSessions = (gymKey) => {
+        setSelectedHistoryGymKey(gymKey);
+        setHistoryView('sessions');
+    };
+
+    const renderExpandableTextField = ({ fieldKey, value, onChange, placeholder, maxLength }) => {
+        const isExpanded = Boolean(expandedTextFields[fieldKey]);
+        const commonProps = {
+            value,
+            onChange: (e) => onChange(e.target.value),
+            className: `climb-date-input climb-note-input${isExpanded ? ' expanded' : ''}`,
+            placeholder,
+            maxLength,
+            title: 'Double-click to expand'
+        };
+
+        if (isExpanded) {
+            return (
+                <textarea
+                    {...commonProps}
+                    rows={4}
+                    onDoubleClick={() => setExpandedTextFields((prev) => ({ ...prev, [fieldKey]: false }))}
+                />
+            );
+        }
+
+        return (
+            <input
+                {...commonProps}
+                type="text"
+                onDoubleClick={() => setExpandedTextFields((prev) => ({ ...prev, [fieldKey]: true }))}
+            />
+        );
     };
 
     const parsedSpeedTime = Number.parseFloat(logTime);
@@ -1456,7 +1854,8 @@ const ClimbingTracker = () => {
         ? Number.isFinite(parsedEditClimbTime) && parsedEditClimbTime > 0
         : Boolean(editClimbGrade);
     const isRopeType = climbType === 'top_rope' || climbType === 'lead';
-    const isGradeTooltipSupported = supportsGradeTooltip(climbType);
+    const isSpeedType = climbType === 'speed';
+    const isDisciplineTooltipSupported = supportsDisciplineTooltip(climbType);
 
     return (
         <div className="climbing-tracker-container">
@@ -1465,7 +1864,7 @@ const ClimbingTracker = () => {
                     <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#1f2333' }}>Climbing Tracker</h2>
                     <div className="climb-subtitle-row">
                         <span className="climb-subtitle">The only way is up.</span>
-                        {isGradeTooltipSupported && (
+                        {isDisciplineTooltipSupported && (
                             <div className="vscale-info-wrap">
                                 <button
                                     type="button"
@@ -1505,7 +1904,7 @@ const ClimbingTracker = () => {
                     )}
                     <button
                         className="climb-history-btn-top"
-                        onClick={() => setShowHistoryModal(true)}
+                        onClick={openHistoryModal}
                     >
                         Show History
                     </button>
@@ -1517,7 +1916,15 @@ const ClimbingTracker = () => {
                     className="vscale-info-popover"
                     style={{ top: `${gradeTooltipPos.top}px`, left: `${gradeTooltipPos.left}px` }}
                 >
-                    {isRopeType ? (
+                    {isSpeedType ? (
+                        <p>
+                            <strong>Speed climbing</strong> is a race on a standardized <strong>15 m wall</strong> with two identical lanes.
+                            At IFSC events, climbers race on the same fixed route every time, so results are directly comparable.
+                            The official wall overhangs by <strong>5°</strong> and uses <strong>31 holds per lane</strong> (<strong>20 handholds + 11 footholds</strong>).
+                            As of <strong>March 6, 2026</strong>, IFSC world records are <strong>4.64s</strong> by <strong>Samuel Watson (USA)</strong> set on <strong>May 3, 2025</strong>,
+                            and <strong>6.03s</strong> by <strong>Aleksandra Miroslaw (POL)</strong> set on <strong>September 24, 2025</strong>.
+                        </p>
+                    ) : isRopeType ? (
                         <p>
                             The <strong>Yosemite Decimal System (YDS)</strong> is the grading scale used for <strong>top rope and lead</strong> route difficulty.
                             YDS has <strong>Classes 1 to 5</strong>: <strong>Class 1-4</strong> covers hiking and scrambling (progressing from walking to steeper terrain
@@ -1535,8 +1942,10 @@ const ClimbingTracker = () => {
                         </p>
                     )}
                     <img
-                        src={isRopeType ? ydsUsMap : blankUsMap}
-                        alt={isRopeType
+                        src={isSpeedType ? speedWallStandard : isRopeType ? ydsUsMap : blankUsMap}
+                        alt={isSpeedType
+                            ? 'Diagram of a standardized 15 meter speed climbing wall with two identical lanes'
+                            : isRopeType
                             ? 'Map of the United States highlighting California and Yosemite Valley'
                             : 'Map of the United States showing state boundaries'}
                         className="vscale-info-map"
@@ -1788,27 +2197,25 @@ const ClimbingTracker = () => {
                                     </div>
 
                                     <div className="form-group climb-remark-group">
-                                        <input
-                                            type="text"
-                                            value={logRouteRemark}
-                                            onChange={(e) => setLogRouteRemark(e.target.value)}
-                                            className="climb-date-input"
-                                            placeholder="Route remark (optional), e.g. New beta / route name"
-                                            maxLength={ROUTE_REMARK_MAX}
-                                        />
+                                        {renderExpandableTextField({
+                                            fieldKey: 'logRouteRemark',
+                                            value: logRouteRemark,
+                                            onChange: setLogRouteRemark,
+                                            placeholder: 'Route remark (optional), e.g. New beta / route name',
+                                            maxLength: ROUTE_REMARK_MAX
+                                        })}
                                     </div>
                                 </>
                             ) : (
                                 <>
                                     <div className="form-group climb-remark-group">
-                                        <input
-                                            type="text"
-                                            value={logSessionNote}
-                                            onChange={(e) => setLogSessionNote(e.target.value)}
-                                            className="climb-date-input"
-                                            placeholder="Session note (optional), e.g. Not feeling great"
-                                            maxLength={SESSION_NOTE_MAX}
-                                        />
+                                        {renderExpandableTextField({
+                                            fieldKey: 'logSessionNote',
+                                            value: logSessionNote,
+                                            onChange: setLogSessionNote,
+                                            placeholder: 'Session note (optional), e.g. Not feeling great',
+                                            maxLength: SESSION_NOTE_MAX
+                                        })}
                                     </div>
 
                                     <div className="form-group session-form-group">
@@ -1880,11 +2287,101 @@ const ClimbingTracker = () => {
                             </div>
                         )}
 
+                        <div className="history-view-toggle" role="tablist" aria-label="History views">
+                            <button
+                                type="button"
+                                className={`history-view-tab ${historyView === 'sessions' ? 'active' : ''}`}
+                                onClick={() => setHistoryView('sessions')}
+                            >
+                                Sessions ({historyVisits.length})
+                            </button>
+                            <button
+                                type="button"
+                                className={`history-view-tab ${historyView === 'gyms' ? 'active' : ''}`}
+                                onClick={() => setHistoryView('gyms')}
+                            >
+                                Gyms ({gymSummaries.length})
+                            </button>
+                        </div>
+
+                        {historyView === 'sessions' && selectedHistoryGymSummary && (
+                            <div className="history-active-filter">
+                                <span className="history-active-filter-label">
+                                    Gym filter: {selectedHistoryGymSummary.displayLabel}
+                                </span>
+                                <button
+                                    type="button"
+                                    className="history-clear-filter-btn"
+                                    onClick={() => setSelectedHistoryGymKey('')}
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        )}
+
                         <div className="history-list">
-                            {historySessions.length === 0 ? (
-                                <p className="empty-message">No climbs logged yet. Go send some rocks!</p>
+                            {historyView === 'gyms' ? (
+                                gymSummaries.length === 0 ? (
+                                    <p className="empty-message">No gyms logged yet. Add a gym when you log a climb.</p>
+                                ) : (
+                                    gymSummaries.map((gym) => (
+                                        <div key={gym.key} className="history-gym-card">
+                                            <div className="history-gym-header">
+                                                <div className="history-gym-header-left">
+                                                    <div className="history-gym-title">{gym.displayLabel}</div>
+                                                    {gym.locationSnippet && (
+                                                        <div className="history-gym-location" title={gym.locationSnippet}>
+                                                            {gym.locationSnippet}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    className="edit-log-btn"
+                                                    onClick={() => handleViewGymSessions(gym.key)}
+                                                >
+                                                    View Sessions
+                                                </button>
+                                            </div>
+
+                                            <div className="history-gym-badges">
+                                                {gym.disciplines.map((type) => (
+                                                    <span key={type} className={`history-discipline-pill ${type}`}>
+                                                        {getDisciplineLabel(type)}
+                                                    </span>
+                                                ))}
+                                            </div>
+
+                                            <div className="history-gym-stats">
+                                                <div className="history-gym-stat">
+                                                    <span className="history-gym-stat-label">Visits</span>
+                                                    <span className="history-gym-stat-value">{gym.visitCount}</span>
+                                                </div>
+                                                <div className="history-gym-stat">
+                                                    <span className="history-gym-stat-label">Climbs</span>
+                                                    <span className="history-gym-stat-value">{gym.climbCount}</span>
+                                                </div>
+                                                <div className="history-gym-stat">
+                                                    <span className="history-gym-stat-label">First Visit</span>
+                                                    <span className="history-gym-stat-value">{formatDateKeyAsUs(getDateKeyFromTimestamp(gym.firstVisitTimestamp))}</span>
+                                                </div>
+                                                <div className="history-gym-stat">
+                                                    <span className="history-gym-stat-label">Last Visit</span>
+                                                    <span className="history-gym-stat-value">{formatDateKeyAsUs(getDateKeyFromTimestamp(gym.lastVisitTimestamp))}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )
                             ) : (
-                                historySessions.map((session) => (
+                                filteredHistoryVisits.length === 0 ? (
+                                    <p className="empty-message">
+                                        {selectedHistoryGymSummary
+                                            ? `No visits logged at ${selectedHistoryGymSummary.displayLabel} yet.`
+                                            : 'No climbs logged yet. Go send some rocks!'}
+                                    </p>
+                                ) : (
+                                    filteredHistoryVisits.map((session) => (
                                     <div key={session.id} className="history-session-card">
                                         <div className="history-session-header">
                                             <div className="history-session-header-left">
@@ -1902,31 +2399,34 @@ const ClimbingTracker = () => {
                                                     onClick={() => openEditSessionModal(session)}
                                                     disabled={session.legacy}
                                                 >
-                                                    Edit Session
+                                                    Edit Visit
                                                 </button>
                                                 <button
                                                     className="delete-log-btn"
                                                     onClick={() => handleDeleteSession(session)}
                                                     disabled={session.legacy}
                                                 >
-                                                    Delete Session
+                                                    Delete Visit
                                                 </button>
                                             </div>
                                         </div>
 
                                         <div className="history-session-climbs">
                                             {session.climbs.length === 0 ? (
-                                                <div className="history-empty-session">No climbs in this session.</div>
+                                                <div className="history-empty-session">No climbs in this visit.</div>
                                             ) : (
                                                 session.climbs.map((climb) => (
-                                                    <div key={climb.id} className="history-session-climb-row">
+                                                    <div key={`${climb.sessionId || session.id}-${climb.id}`} className="history-session-climb-row">
                                                         <div className="history-session-climb-main">
+                                                            <span className={`history-discipline-pill ${climb.type}`}>
+                                                                {getDisciplineLabel(climb.type)}
+                                                            </span>
                                                             {(() => {
-                                                                const badgeColor = climbType === 'speed'
+                                                                const badgeColor = climb.type === 'speed'
                                                                     ? '#f59e0b'
-                                                                    : (typeof climb.grade === 'string' ? getBarColorByType(climbType, climb.grade) : '#94a3b8');
+                                                                    : (typeof climb.grade === 'string' ? getBarColorByType(climb.type, climb.grade) : '#94a3b8');
                                                                 const speedTime = Number.parseFloat(climb.time);
-                                                                const badgeLabel = climbType === 'speed'
+                                                                const badgeLabel = climb.type === 'speed'
                                                                     ? (Number.isFinite(speedTime) ? `${speedTime}s` : '-')
                                                                     : (climb.grade || '-');
                                                                 return (
@@ -1942,14 +2442,14 @@ const ClimbingTracker = () => {
                                                         <div className="history-item-actions">
                                                             <button
                                                                 className="edit-log-btn"
-                                                                onClick={() => openEditClimbModal(session.id, session.type, climb)}
+                                                                onClick={() => openEditClimbModal(climb.sessionId || session.id, climb.type, climb)}
                                                                 disabled={climb.legacy}
                                                             >
                                                                 Edit
                                                             </button>
                                                             <button
                                                                 className="delete-log-btn"
-                                                                onClick={() => handleDeleteClimb(session.id, climb.id, climb.legacy)}
+                                                                onClick={() => handleDeleteClimb(climb.sessionId || session.id, climb.id, climb.legacy)}
                                                                 disabled={climb.legacy}
                                                             >
                                                                 Delete
@@ -1960,7 +2460,8 @@ const ClimbingTracker = () => {
                                             )}
                                         </div>
                                     </div>
-                                ))
+                                    ))
+                                )
                             )}
                         </div>
                     </div>
@@ -1971,7 +2472,7 @@ const ClimbingTracker = () => {
             {showEditSessionModal && createPortal(
                 <div className="climb-modal-overlay" onClick={closeEditSessionModal}>
                     <div className="climb-modal edit-session-modal" onClick={(e) => e.stopPropagation()}>
-                        <h3>Edit Session</h3>
+                        <h3>Edit Visit</h3>
                         <div className="edit-session-modal-content">
                             <div className="form-group">
                                 <label>Date</label>
@@ -1984,14 +2485,13 @@ const ClimbingTracker = () => {
                             </div>
 
                             <div className="form-group climb-remark-group">
-                                <input
-                                    type="text"
-                                    value={editSessionNote}
-                                    onChange={(e) => setEditSessionNote(e.target.value)}
-                                    className="climb-date-input"
-                                    placeholder="Session note (optional), e.g. Not feeling great"
-                                    maxLength={SESSION_NOTE_MAX}
-                                />
+                                {renderExpandableTextField({
+                                    fieldKey: 'editSessionNote',
+                                    value: editSessionNote,
+                                    onChange: setEditSessionNote,
+                                    placeholder: 'Session note (optional), e.g. Not feeling great',
+                                    maxLength: SESSION_NOTE_MAX
+                                })}
                             </div>
 
                             <div className="form-group">
@@ -2122,14 +2622,13 @@ const ClimbingTracker = () => {
                             </div>
 
                             <div className="form-group climb-remark-group">
-                                <input
-                                    type="text"
-                                    value={editClimbRemark}
-                                    onChange={(e) => setEditClimbRemark(e.target.value)}
-                                    className="climb-date-input"
-                                    placeholder="Route remark (optional), e.g. New beta / route name"
-                                    maxLength={ROUTE_REMARK_MAX}
-                                />
+                                {renderExpandableTextField({
+                                    fieldKey: 'editClimbRemark',
+                                    value: editClimbRemark,
+                                    onChange: setEditClimbRemark,
+                                    placeholder: 'Route remark (optional), e.g. New beta / route name',
+                                    maxLength: ROUTE_REMARK_MAX
+                                })}
                             </div>
 
                             {editClimbError && <div className="gym-helper-text error">{editClimbError}</div>}
