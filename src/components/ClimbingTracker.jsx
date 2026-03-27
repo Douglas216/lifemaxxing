@@ -29,6 +29,11 @@ import {
 } from 'recharts';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase';
+import {
+    isCoupleAccountByUid,
+    getPartnerUid,
+    getDisplayNameForUid
+} from '../constants';
 import blankUsMap from '../assets/Blank_US_Map_(states_only).svg';
 import ydsUsMap from '../assets/YDS_US_Map_Yosemite.svg';
 import speedWallStandard from '../assets/Speed_Wall_Standard.svg';
@@ -51,6 +56,10 @@ const SESSION_NOTE_MAX = 140;
 const MIGRATION_VERSION = 1;
 const GOOGLE_PLACES_SCRIPT_ID = 'google-places-maps-script';
 const GOOGLE_PLACES_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
+const SOLO_CHART_MODE = 'solo';
+const COMPARE_CHART_MODE = 'compare';
+const DOUGLAS_COMPARE_BAR_COLOR = '#1d4ed8';
+const NANCY_COMPARE_BAR_COLOR = '#ec4899';
 
 let googlePlacesScriptPromise = null;
 
@@ -335,6 +344,382 @@ const buildLegacySessionCards = (legacyClimbs) => {
         .sort((a, b) => b.timestamp - a.timestamp);
 };
 
+const buildActiveSessions = (migrationCompleted, sessionsBase, climbsBySession, legacyClimbs) => {
+    if (migrationCompleted) {
+        return sessionsBase.map((session) => ({
+            ...session,
+            legacy: false,
+            climbs: climbsBySession[session.id] || []
+        }));
+    }
+    return buildLegacySessionCards(legacyClimbs);
+};
+
+const buildActiveVisits = (sessions) => {
+    const grouped = new Map();
+
+    sessions.forEach((session) => {
+        const visitKey = getVisitGroupKey(session);
+        const sessionTimestamp = Number.isFinite(session.timestamp) ? session.timestamp : Date.now();
+        const sessionNotes = typeof session.sessionNote === 'string' ? session.sessionNote.trim() : '';
+
+        if (!grouped.has(visitKey)) {
+            grouped.set(visitKey, {
+                id: visitKey,
+                dateKey: session.dateKey || getDateKeyFromTimestamp(sessionTimestamp),
+                timestamp: sessionTimestamp,
+                gymPlaceId: session.gymPlaceId || '',
+                gymName: session.gymName || '',
+                gymAddress: session.gymAddress || '',
+                gymLat: Number.isFinite(session.gymLat) ? session.gymLat : null,
+                gymLng: Number.isFinite(session.gymLng) ? session.gymLng : null,
+                gymNickname: session.gymNickname || '',
+                sessionNote: '',
+                legacy: Boolean(session.legacy),
+                sourceSessionIds: [],
+                disciplines: new Set(),
+                sessionNotes: new Set(),
+                climbs: []
+            });
+        }
+
+        const visit = grouped.get(visitKey);
+        visit.timestamp = Math.max(visit.timestamp, sessionTimestamp);
+        visit.legacy = visit.legacy || Boolean(session.legacy);
+        visit.sourceSessionIds.push(session.id);
+
+        if (!visit.gymPlaceId && session.gymPlaceId) visit.gymPlaceId = session.gymPlaceId;
+        if (!visit.gymName && session.gymName) visit.gymName = session.gymName;
+        if (!visit.gymAddress && session.gymAddress) visit.gymAddress = session.gymAddress;
+        if (!Number.isFinite(visit.gymLat) && Number.isFinite(session.gymLat)) visit.gymLat = session.gymLat;
+        if (!Number.isFinite(visit.gymLng) && Number.isFinite(session.gymLng)) visit.gymLng = session.gymLng;
+
+        const nextNickname = typeof session.gymNickname === 'string' ? session.gymNickname.trim() : '';
+        if (nextNickname && !visit.gymNickname) {
+            visit.gymNickname = nextNickname;
+        }
+
+        if (sessionNotes) {
+            visit.sessionNotes.add(sessionNotes);
+        }
+
+        (session.climbs || []).forEach((climb) => {
+            const climbTypeValue = getClimbType(climb, session);
+            visit.disciplines.add(climbTypeValue);
+            visit.climbs.push({
+                ...climb,
+                type: climbTypeValue,
+                sessionId: session.id,
+                legacy: Boolean(climb.legacy || session.legacy),
+                sessionTimestamp
+            });
+        });
+    });
+
+    return Array.from(grouped.values())
+        .map((visit) => {
+            const sortedClimbs = [...visit.climbs].sort((a, b) => {
+                const orderDiff = (a.order ?? 0) - (b.order ?? 0);
+                if (orderDiff !== 0) return orderDiff;
+                const timeDiff = (a.sessionTimestamp || 0) - (b.sessionTimestamp || 0);
+                if (timeDiff !== 0) return timeDiff;
+                return String(a.id).localeCompare(String(b.id));
+            });
+            const notes = Array.from(visit.sessionNotes);
+            return {
+                ...visit,
+                type: sortedClimbs[0]?.type || 'boulder',
+                disciplines: DISCIPLINE_ORDER.filter((type) => visit.disciplines.has(type)),
+                sessionNote: notes.join(' • '),
+                climbs: sortedClimbs
+            };
+        })
+        .sort((a, b) => b.timestamp - a.timestamp);
+};
+
+const getTimeRangeCutoff = (timeRange) => {
+    const now = Date.now();
+    if (timeRange === '1W') return now - 7 * 24 * 60 * 60 * 1000;
+    if (timeRange === '1M') return now - 30 * 24 * 60 * 60 * 1000;
+    if (timeRange === '1Y') return now - 365 * 24 * 60 * 60 * 1000;
+    return 0;
+};
+
+const filterVisitsByTimeRange = (visits, timeRange) => {
+    const cutoff = getTimeRangeCutoff(timeRange);
+    return visits.filter((visit) => visit.timestamp >= cutoff);
+};
+
+const buildSoloChartData = (disciplineHistoryVisits, timeRange, climbType) => {
+    const filteredVisits = filterVisitsByTimeRange(disciplineHistoryVisits, timeRange);
+
+    if (climbType === 'speed') {
+        const points = [];
+        filteredVisits
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .forEach((visit) => {
+                visit.climbs
+                    .filter((climb) => climb.type === 'speed')
+                    .forEach((climb, index) => {
+                        const time = Number.parseFloat(climb.time);
+                        if (!Number.isFinite(time) || time <= 0) return;
+                        points.push({
+                            id: `${visit.id}_${climb.sessionId}_${climb.id}`,
+                            timestamp: visit.timestamp + index,
+                            time
+                        });
+                    });
+            });
+        return points;
+    }
+
+    const grades = climbType === 'boulder' ? V_GRADES : YDS_GRADES;
+    const counts = grades.reduce((acc, grade) => {
+        acc[grade] = 0;
+        return acc;
+    }, {});
+
+    filteredVisits.forEach((visit) => {
+        visit.climbs.forEach((climb) => {
+            if (climb.type !== climbType) return;
+            if (typeof climb.grade === 'string' && counts[climb.grade] !== undefined) {
+                counts[climb.grade] += 1;
+            }
+        });
+    });
+
+    return grades
+        .map((grade) => ({ grade, count: counts[grade] || 0 }))
+        .filter((item) => item.count > 0 || timeRange === 'ALL');
+};
+
+const buildPairedBoulderChartData = (viewerVisits, partnerVisits, timeRange) => {
+    const filteredViewerVisits = filterVisitsByTimeRange(viewerVisits, timeRange);
+    const filteredPartnerVisits = filterVisitsByTimeRange(partnerVisits, timeRange);
+    const viewerCounts = V_GRADES.reduce((acc, grade) => ({ ...acc, [grade]: 0 }), {});
+    const partnerCounts = V_GRADES.reduce((acc, grade) => ({ ...acc, [grade]: 0 }), {});
+
+    filteredViewerVisits.forEach((visit) => {
+        visit.climbs.forEach((climb) => {
+            if (climb.type !== 'boulder') return;
+            if (typeof climb.grade === 'string' && viewerCounts[climb.grade] !== undefined) {
+                viewerCounts[climb.grade] += 1;
+            }
+        });
+    });
+
+    filteredPartnerVisits.forEach((visit) => {
+        visit.climbs.forEach((climb) => {
+            if (climb.type !== 'boulder') return;
+            if (typeof climb.grade === 'string' && partnerCounts[climb.grade] !== undefined) {
+                partnerCounts[climb.grade] += 1;
+            }
+        });
+    });
+
+    let visibleGrades;
+    if (timeRange === 'ALL') {
+        const activeIndices = V_GRADES
+            .map((grade, index) => (viewerCounts[grade] > 0 || partnerCounts[grade] > 0 ? index : -1))
+            .filter((index) => index >= 0);
+
+        if (activeIndices.length === 0) {
+            return [];
+        }
+
+        visibleGrades = V_GRADES.slice(activeIndices[0], activeIndices[activeIndices.length - 1] + 1);
+    } else {
+        visibleGrades = V_GRADES.filter((grade) => viewerCounts[grade] > 0 || partnerCounts[grade] > 0);
+    }
+
+    return visibleGrades.map((grade) => ({
+        grade,
+        viewerCount: viewerCounts[grade] || 0,
+        partnerCount: partnerCounts[grade] || 0
+    }));
+};
+
+const getColorForClimber = (name) => (name === 'Nancy' ? NANCY_COMPARE_BAR_COLOR : DOUGLAS_COMPARE_BAR_COLOR);
+
+const useReadOnlyClimbingVisits = (ownerUid, enabled = true) => {
+    const [isMigrationChecked, setIsMigrationChecked] = useState(false);
+    const [migrationCompleted, setMigrationCompleted] = useState(false);
+    const [sessionsBase, setSessionsBase] = useState([]);
+    const [climbsBySession, setClimbsBySession] = useState({});
+    const [legacyClimbs, setLegacyClimbs] = useState([]);
+    const [loading, setLoading] = useState(Boolean(enabled && ownerUid));
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        if (!enabled || !ownerUid) {
+            setIsMigrationChecked(false);
+            setMigrationCompleted(false);
+            setSessionsBase([]);
+            setClimbsBySession({});
+            setLegacyClimbs([]);
+            setLoading(false);
+            setError('');
+            return undefined;
+        }
+
+        let isActive = true;
+        setLoading(true);
+        setError('');
+        setIsMigrationChecked(false);
+        setMigrationCompleted(false);
+        setSessionsBase([]);
+        setClimbsBySession({});
+        setLegacyClimbs([]);
+
+        const runCheck = async () => {
+            try {
+                const markerRef = doc(db, 'users', ownerUid, 'meta', 'climbing_migration');
+                const markerSnap = await getDoc(markerRef);
+                if (!isActive) return;
+
+                if (markerSnap.exists() && markerSnap.data()?.version === MIGRATION_VERSION) {
+                    setMigrationCompleted(true);
+                    setIsMigrationChecked(true);
+                    return;
+                }
+
+                const legacyRef = collection(db, 'users', ownerUid, 'climbing_history');
+                const legacySnap = await getDocs(legacyRef);
+                if (!isActive) return;
+
+                setMigrationCompleted(legacySnap.empty);
+                setIsMigrationChecked(true);
+            } catch (readError) {
+                if (!isActive) return;
+                console.error('Comparison history check failed:', readError);
+                setError('Could not load partner climbing history.');
+                setLoading(false);
+            }
+        };
+
+        runCheck();
+
+        return () => {
+            isActive = false;
+        };
+    }, [enabled, ownerUid]);
+
+    useEffect(() => {
+        if (!enabled || !ownerUid || !isMigrationChecked || migrationCompleted) return undefined;
+
+        const legacyRef = collection(db, 'users', ownerUid, 'climbing_history');
+        return onSnapshot(
+            legacyRef,
+            (snapshot) => {
+                const next = snapshot.docs.map((snap) => {
+                    const data = snap.data() || {};
+                    const timestamp = data.date?.toMillis?.() || Date.now();
+                    return {
+                        id: snap.id,
+                        ...data,
+                        timestamp,
+                        dateKey: data.dateKey || getDateKeyFromTimestamp(timestamp)
+                    };
+                }).sort((a, b) => b.timestamp - a.timestamp);
+                setLegacyClimbs(next);
+                setError('');
+                setLoading(false);
+            },
+            (snapshotError) => {
+                console.error('Comparison legacy history subscribe failed:', snapshotError);
+                setError('Could not load partner climbing history.');
+                setLoading(false);
+            }
+        );
+    }, [enabled, ownerUid, isMigrationChecked, migrationCompleted]);
+
+    useEffect(() => {
+        if (!enabled || !ownerUid || !isMigrationChecked || !migrationCompleted) return undefined;
+
+        const sessionsRef = collection(db, 'users', ownerUid, 'climbing_sessions');
+        const sessionsQuery = query(sessionsRef, orderBy('date', 'desc'));
+        return onSnapshot(
+            sessionsQuery,
+            (snapshot) => {
+                const next = snapshot.docs.map((snap) => {
+                    const data = snap.data() || {};
+                    const timestamp = data.date?.toMillis?.() || Date.now();
+                    return {
+                        id: snap.id,
+                        ...data,
+                        timestamp,
+                        dateKey: data.dateKey || getDateKeyFromTimestamp(timestamp)
+                    };
+                });
+                setSessionsBase(next);
+                if (next.length === 0) {
+                    setClimbsBySession({});
+                    setLoading(false);
+                }
+                setError('');
+            },
+            (snapshotError) => {
+                console.error('Comparison sessions subscribe failed:', snapshotError);
+                setError('Could not load partner climbing history.');
+                setLoading(false);
+            }
+        );
+    }, [enabled, ownerUid, isMigrationChecked, migrationCompleted]);
+
+    useEffect(() => {
+        if (!enabled || !ownerUid || !migrationCompleted) return undefined;
+
+        if (sessionsBase.length === 0) {
+            setClimbsBySession({});
+            setLoading(false);
+            return undefined;
+        }
+
+        const unsubs = sessionsBase.map((session) => {
+            const climbsRef = collection(db, 'users', ownerUid, 'climbing_sessions', session.id, 'climbs');
+            const climbsQuery = query(climbsRef, orderBy('order', 'asc'));
+            return onSnapshot(
+                climbsQuery,
+                (snapshot) => {
+                    const climbs = snapshot.docs.map((snap, index) => {
+                        const data = snap.data() || {};
+                        return {
+                            id: snap.id,
+                            ...data,
+                            order: Number.isFinite(data.order) ? data.order : index
+                        };
+                    });
+                    setClimbsBySession((prev) => ({ ...prev, [session.id]: climbs }));
+                    setError('');
+                    setLoading(false);
+                },
+                (snapshotError) => {
+                    console.error('Comparison climbs subscribe failed:', snapshotError);
+                    setError('Could not load partner climbing history.');
+                    setLoading(false);
+                }
+            );
+        });
+
+        return () => {
+            unsubs.forEach((unsub) => unsub());
+        };
+    }, [enabled, ownerUid, migrationCompleted, sessionsBase]);
+
+    const activeSessions = useMemo(
+        () => buildActiveSessions(migrationCompleted, sessionsBase, climbsBySession, legacyClimbs),
+        [migrationCompleted, sessionsBase, climbsBySession, legacyClimbs]
+    );
+
+    const activeVisits = useMemo(() => buildActiveVisits(activeSessions), [activeSessions]);
+
+    return {
+        activeVisits,
+        loading,
+        error
+    };
+};
+
 const commitSessionWithClimbs = async (sessionRef, sessionPayload, climbPayloads) => {
     const firstChunkSize = Math.max(1, BATCH_CHUNK_SIZE - 1);
     for (let start = 0; start < climbPayloads.length || start === 0; start += firstChunkSize) {
@@ -358,9 +743,15 @@ const commitSessionWithClimbs = async (sessionRef, sessionPayload, climbPayloads
 
 const ClimbingTracker = () => {
     const { user } = useAuth();
+    const partnerUid = getPartnerUid(user?.uid);
+    const isCoupleAccount = isCoupleAccountByUid(user?.uid);
+    const viewerDisplayName = getDisplayNameForUid(user?.uid);
+    const partnerDisplayName = getDisplayNameForUid(partnerUid);
+    const comparisonToggleActiveColor = getColorForClimber(partnerDisplayName);
 
     const [timeRange, setTimeRange] = useState('ALL');
     const [climbType, setClimbType] = useState('boulder');
+    const [chartMode, setChartMode] = useState(SOLO_CHART_MODE);
     const [showGradeTooltip, setShowGradeTooltip] = useState(false);
     const [gradeTooltipPos, setGradeTooltipPos] = useState({ top: 0, left: 0 });
 
@@ -433,6 +824,13 @@ const ClimbingTracker = () => {
     const countryCodeRef = useRef(getPreferredCountryCode());
 
     const isLegacyMode = isMigrationChecked && !migrationCompleted;
+    const canCompareClimbs = isCoupleAccount && climbType === 'boulder';
+
+    const {
+        activeVisits: partnerActiveVisits,
+        loading: partnerHistoryLoading,
+        error: partnerHistoryError
+    } = useReadOnlyClimbingVisits(partnerUid, isCoupleAccount);
 
     const resetLogGymState = () => {
         setGymQuery('');
@@ -457,6 +855,7 @@ const ClimbingTracker = () => {
         setBulkCounts(createBulkCounts(climbType));
         if (climbType === 'speed') setLogMode('single');
         if (!supportsDisciplineTooltip(climbType)) setShowGradeTooltip(false);
+        if (climbType !== 'boulder') setChartMode(SOLO_CHART_MODE);
     }, [climbType]);
 
     const updateGradeTooltipPosition = () => {
@@ -695,98 +1094,12 @@ const ClimbingTracker = () => {
         };
     }, [user, migrationCompleted, sessionsBase]);
 
-    const activeSessions = useMemo(() => {
-        if (migrationCompleted) {
-            return sessionsBase.map((session) => ({
-                ...session,
-                legacy: false,
-                climbs: climbsBySession[session.id] || []
-            }));
-        }
-        return buildLegacySessionCards(legacyClimbs);
-    }, [migrationCompleted, sessionsBase, climbsBySession, legacyClimbs]);
+    const activeSessions = useMemo(
+        () => buildActiveSessions(migrationCompleted, sessionsBase, climbsBySession, legacyClimbs),
+        [migrationCompleted, sessionsBase, climbsBySession, legacyClimbs]
+    );
 
-    const activeVisits = useMemo(() => {
-        const grouped = new Map();
-
-        activeSessions.forEach((session) => {
-            const visitKey = getVisitGroupKey(session);
-            const sessionTimestamp = Number.isFinite(session.timestamp) ? session.timestamp : Date.now();
-            const sessionNotes = typeof session.sessionNote === 'string' ? session.sessionNote.trim() : '';
-
-            if (!grouped.has(visitKey)) {
-                grouped.set(visitKey, {
-                    id: visitKey,
-                    dateKey: session.dateKey || getDateKeyFromTimestamp(sessionTimestamp),
-                    timestamp: sessionTimestamp,
-                    gymPlaceId: session.gymPlaceId || '',
-                    gymName: session.gymName || '',
-                    gymAddress: session.gymAddress || '',
-                    gymLat: Number.isFinite(session.gymLat) ? session.gymLat : null,
-                    gymLng: Number.isFinite(session.gymLng) ? session.gymLng : null,
-                    gymNickname: session.gymNickname || '',
-                    sessionNote: '',
-                    legacy: Boolean(session.legacy),
-                    sourceSessionIds: [],
-                    disciplines: new Set(),
-                    sessionNotes: new Set(),
-                    climbs: []
-                });
-            }
-
-            const visit = grouped.get(visitKey);
-            visit.timestamp = Math.max(visit.timestamp, sessionTimestamp);
-            visit.legacy = visit.legacy || Boolean(session.legacy);
-            visit.sourceSessionIds.push(session.id);
-
-            if (!visit.gymPlaceId && session.gymPlaceId) visit.gymPlaceId = session.gymPlaceId;
-            if (!visit.gymName && session.gymName) visit.gymName = session.gymName;
-            if (!visit.gymAddress && session.gymAddress) visit.gymAddress = session.gymAddress;
-            if (!Number.isFinite(visit.gymLat) && Number.isFinite(session.gymLat)) visit.gymLat = session.gymLat;
-            if (!Number.isFinite(visit.gymLng) && Number.isFinite(session.gymLng)) visit.gymLng = session.gymLng;
-
-            const nextNickname = typeof session.gymNickname === 'string' ? session.gymNickname.trim() : '';
-            if (nextNickname && !visit.gymNickname) {
-                visit.gymNickname = nextNickname;
-            }
-
-            if (sessionNotes) {
-                visit.sessionNotes.add(sessionNotes);
-            }
-
-            (session.climbs || []).forEach((climb) => {
-                const climbTypeValue = getClimbType(climb, session);
-                visit.disciplines.add(climbTypeValue);
-                visit.climbs.push({
-                    ...climb,
-                    type: climbTypeValue,
-                    sessionId: session.id,
-                    legacy: Boolean(climb.legacy || session.legacy),
-                    sessionTimestamp
-                });
-            });
-        });
-
-        return Array.from(grouped.values())
-            .map((visit) => {
-                const sortedClimbs = [...visit.climbs].sort((a, b) => {
-                    const orderDiff = (a.order ?? 0) - (b.order ?? 0);
-                    if (orderDiff !== 0) return orderDiff;
-                    const timeDiff = (a.sessionTimestamp || 0) - (b.sessionTimestamp || 0);
-                    if (timeDiff !== 0) return timeDiff;
-                    return String(a.id).localeCompare(String(b.id));
-                });
-                const notes = Array.from(visit.sessionNotes);
-                return {
-                    ...visit,
-                    type: sortedClimbs[0]?.type || 'boulder',
-                    disciplines: DISCIPLINE_ORDER.filter((type) => visit.disciplines.has(type)),
-                    sessionNote: notes.join(' • '),
-                    climbs: sortedClimbs
-                };
-            })
-            .sort((a, b) => b.timestamp - a.timestamp);
-    }, [activeSessions]);
+    const activeVisits = useMemo(() => buildActiveVisits(activeSessions), [activeSessions]);
 
     const historyVisits = useMemo(() => {
         return activeVisits
@@ -887,52 +1200,22 @@ const ClimbingTracker = () => {
         return gymSummaries.find((summary) => summary.key === selectedHistoryGymKey) || null;
     }, [gymSummaries, selectedHistoryGymKey]);
 
-    const chartData = useMemo(() => {
-        const now = Date.now();
-        let cutoff = 0;
-        if (timeRange === '1W') cutoff = now - 7 * 24 * 60 * 60 * 1000;
-        if (timeRange === '1M') cutoff = now - 30 * 24 * 60 * 60 * 1000;
-        if (timeRange === '1Y') cutoff = now - 365 * 24 * 60 * 60 * 1000;
+    const soloChartData = useMemo(
+        () => buildSoloChartData(disciplineHistoryVisits, timeRange, climbType),
+        [disciplineHistoryVisits, timeRange, climbType]
+    );
 
-        const filteredVisits = disciplineHistoryVisits.filter((visit) => visit.timestamp >= cutoff);
+    const pairedChartData = useMemo(
+        () => buildPairedBoulderChartData(disciplineHistoryVisits, partnerActiveVisits, timeRange),
+        [disciplineHistoryVisits, partnerActiveVisits, timeRange]
+    );
 
-        if (climbType === 'speed') {
-            const points = [];
-            filteredVisits
-                .sort((a, b) => a.timestamp - b.timestamp)
-                .forEach((visit) => {
-                    visit.climbs
-                        .filter((climb) => climb.type === 'speed')
-                        .forEach((climb, index) => {
-                        const time = Number.parseFloat(climb.time);
-                        if (!Number.isFinite(time) || time <= 0) return;
-                        points.push({
-                            id: `${visit.id}_${climb.sessionId}_${climb.id}`,
-                            timestamp: visit.timestamp + index,
-                            time
-                        });
-                    });
-                });
-            return points;
-        }
-
-        const grades = climbType === 'boulder' ? V_GRADES : YDS_GRADES;
-        const counts = grades.reduce((acc, grade) => {
-            acc[grade] = 0;
-            return acc;
-        }, {});
-
-        filteredVisits.forEach((visit) => {
-            visit.climbs.forEach((climb) => {
-                if (climb.type !== climbType) return;
-                if (typeof climb.grade === 'string' && counts[climb.grade] !== undefined) {
-                    counts[climb.grade] += 1;
-                }
-            });
-        });
-
-        return grades.map((grade) => ({ grade, count: counts[grade] || 0 })).filter((item) => item.count > 0 || timeRange === 'ALL');
-    }, [disciplineHistoryVisits, timeRange, climbType]);
+    const isCompareModeActive = canCompareClimbs && chartMode === COMPARE_CHART_MODE;
+    const chartData = isCompareModeActive ? pairedChartData : soloChartData;
+    const comparisonToggleLabel = `See ${partnerDisplayName}♡`;
+    const chartBottomMargin = isCompareModeActive ? 24 : 10;
+    const chartXAxisHeight = isCompareModeActive ? 36 : 26;
+    const chartTickMargin = isCompareModeActive ? 10 : 4;
 
     const totalBulkClimbs = useMemo(() => {
         return Object.values(bulkCounts).reduce((sum, value) => {
@@ -1859,9 +2142,9 @@ const ClimbingTracker = () => {
 
     return (
         <div className="climbing-tracker-container">
-            <div className="top-bar">
-                <div className="title-group">
-                    <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#1f2333' }}>Climbing Tracker</h2>
+            <div className="climb-top-bar">
+                <div className="climb-title-group">
+                    <h2 className="climb-title">Climbing Tracker</h2>
                     <div className="climb-subtitle-row">
                         <span className="climb-subtitle">The only way is up.</span>
                         {isDisciplineTooltipSupported && (
@@ -1883,31 +2166,49 @@ const ClimbingTracker = () => {
                     </div>
                 </div>
 
-                <div className="climb-type-controls">
-                    <button
-                        className="climb-type-toggle-btn"
-                        onClick={cycleClimbType}
-                        title="Click to switch climbing discipline"
-                    >
-                        {climbType === 'boulder' ? 'Bouldering' : climbType === 'top_rope' ? 'Top Rope' : climbType === 'lead' ? 'Lead' : 'Speed'}
-                    </button>
-                </div>
-
-                <div className="climb-top-actions">
-                    {isLegacyMode && (
+                <div className="climb-header-controls">
+                    <div className="climb-type-controls">
                         <button
-                            className="climb-migrate-btn-top"
-                            onClick={() => setShowMigrationModal(true)}
+                            className="climb-type-toggle-btn"
+                            onClick={cycleClimbType}
+                            title="Click to switch climbing discipline"
                         >
-                            Migrate Data
+                            {climbType === 'boulder' ? 'Bouldering' : climbType === 'top_rope' ? 'Top Rope' : climbType === 'lead' ? 'Lead' : 'Speed'}
                         </button>
-                    )}
-                    <button
-                        className="climb-history-btn-top"
-                        onClick={openHistoryModal}
-                    >
-                        Show History
-                    </button>
+                    </div>
+
+                    <div className="climb-top-actions">
+                        {isLegacyMode && (
+                            <button
+                                className="climb-migrate-btn-top"
+                                onClick={() => setShowMigrationModal(true)}
+                            >
+                                Migrate Data
+                            </button>
+                        )}
+                        <button
+                            className="climb-history-btn-top climb-history-btn-top--history"
+                            onClick={openHistoryModal}
+                        >
+                            Show History
+                        </button>
+                        {canCompareClimbs && (
+                            <button
+                                type="button"
+                                className={`climb-history-btn-top climb-history-btn-top--compare ${isCompareModeActive ? 'active' : ''}`}
+                                onClick={() => setChartMode((prev) => (
+                                    prev === COMPARE_CHART_MODE ? SOLO_CHART_MODE : COMPARE_CHART_MODE
+                                ))}
+                                style={isCompareModeActive ? {
+                                    background: comparisonToggleActiveColor,
+                                    borderColor: comparisonToggleActiveColor,
+                                    color: '#fff'
+                                } : undefined}
+                            >
+                                {comparisonToggleLabel}
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -1955,9 +2256,37 @@ const ClimbingTracker = () => {
             )}
 
             <div className="chart-area">
+                {isCompareModeActive && (
+                    <div className="climb-compare-panel">
+                        <div className="climb-compare-legend">
+                            <span className="climb-compare-legend-item">
+                                <span
+                                    className="climb-compare-legend-swatch"
+                                    style={{ backgroundColor: getColorForClimber(viewerDisplayName) }}
+                                />
+                                {viewerDisplayName}
+                            </span>
+                            <span className="climb-compare-legend-item">
+                                <span
+                                    className="climb-compare-legend-swatch"
+                                    style={{ backgroundColor: getColorForClimber(partnerDisplayName) }}
+                                />
+                                {partnerDisplayName}
+                            </span>
+                        </div>
+                        {partnerHistoryLoading && (
+                            <p className="climb-compare-status">Loading {partnerDisplayName}&rsquo;s climbing history...</p>
+                        )}
+                        {partnerHistoryError && (
+                            <p className="climb-compare-status climb-compare-status--warning">
+                                Comparison is unavailable until Firestore rules allow read-only access to {partnerDisplayName}&rsquo;s climbing history.
+                            </p>
+                        )}
+                    </div>
+                )}
                 <ResponsiveContainer width="100%" height="100%">
                     {climbType === 'speed' ? (
-                        <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                        <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: chartBottomMargin }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                             <XAxis
                                 dataKey="timestamp"
@@ -1968,6 +2297,8 @@ const ClimbingTracker = () => {
                                 tickLine={false}
                                 axisLine={false}
                                 interval="preserveStartEnd"
+                                tickMargin={chartTickMargin}
+                                height={chartXAxisHeight}
                             />
                             <YAxis
                                 domain={['auto', 'auto']}
@@ -1991,8 +2322,8 @@ const ClimbingTracker = () => {
                                 activeDot={{ r: 6 }}
                             />
                         </LineChart>
-                    ) : (
-                        <BarChart data={chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
+                    ) : isCompareModeActive ? (
+                        <BarChart data={chartData} margin={{ top: 10, right: 0, left: 0, bottom: chartBottomMargin }} barGap={6} barCategoryGap="24%">
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                             <XAxis
                                 dataKey="grade"
@@ -2000,6 +2331,34 @@ const ClimbingTracker = () => {
                                 axisLine={{ stroke: '#eee' }}
                                 tick={{ fontSize: 10, fill: '#666' }}
                                 interval={timeRange === 'ALL' ? 'preserveStartEnd' : 0}
+                                tickMargin={chartTickMargin}
+                                height={chartXAxisHeight}
+                            />
+                            <YAxis
+                                allowDecimals={false}
+                                tickLine={false}
+                                axisLine={false}
+                                tick={{ fontSize: 12, fill: '#aaa' }}
+                            />
+                            <Tooltip
+                                cursor={{ fill: '#f4f4f5' }}
+                                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                                formatter={(value, name) => [value, name]}
+                            />
+                            <Bar dataKey="viewerCount" name={viewerDisplayName} fill={getColorForClimber(viewerDisplayName)} radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="partnerCount" name={partnerDisplayName} fill={getColorForClimber(partnerDisplayName)} radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                    ) : (
+                        <BarChart data={chartData} margin={{ top: 10, right: 0, left: 0, bottom: chartBottomMargin }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                            <XAxis
+                                dataKey="grade"
+                                tickLine={false}
+                                axisLine={{ stroke: '#eee' }}
+                                tick={{ fontSize: 10, fill: '#666' }}
+                                interval={timeRange === 'ALL' ? 'preserveStartEnd' : 0}
+                                tickMargin={chartTickMargin}
+                                height={chartXAxisHeight}
                                 ticks={timeRange === 'ALL'
                                     ? (climbType === 'boulder'
                                         ? ['VB', 'V1', 'V3', 'V5', 'V7', 'V9', 'V11', 'V13', 'V15', 'V17']
@@ -2026,7 +2385,7 @@ const ClimbingTracker = () => {
                 </ResponsiveContainer>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.5rem' }}>
+            <div className="climb-time-range-row">
                 <div className="time-range-controls">
                     {['1W', '1M', '1Y', 'ALL'].map((range) => (
                         <button

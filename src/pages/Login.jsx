@@ -1,5 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import {
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+  sendPasswordResetEmail,
+} from "firebase/auth";
 import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
@@ -9,6 +14,8 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+  const [sendingReset, setSendingReset] = useState(false);
   const navigate = useNavigate();
   const { user, loading } = useAuth();
 
@@ -23,6 +30,7 @@ export default function Login() {
   async function handleLogin() {
     try {
       setErrorMsg("");
+      setInfoMsg("");
       await signInWithEmailAndPassword(auth, email, password);
     } catch (err) {
       setErrorMsg(err.message);
@@ -33,6 +41,7 @@ export default function Login() {
   async function handleGoogleLogin() {
     try {
       setErrorMsg("");
+      setInfoMsg("");
       const provider = new GoogleAuthProvider();
 
       const result = await signInWithPopup(auth, provider);
@@ -54,6 +63,28 @@ export default function Login() {
     } catch (err) {
       console.error(err);
       setErrorMsg("Google login failed. Please try again.");
+    }
+  }
+
+  async function handleForgotPassword() {
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail) {
+      setInfoMsg("");
+      setErrorMsg("Enter your email first, then click Forgot password?");
+      return;
+    }
+
+    try {
+      setSendingReset(true);
+      setErrorMsg("");
+      await sendPasswordResetEmail(auth, trimmedEmail);
+      setInfoMsg("If that account exists, a password reset email has been sent.");
+    } catch (err) {
+      setErrorMsg(err.message);
+      setInfoMsg("");
+    } finally {
+      setSendingReset(false);
     }
   }
 
@@ -80,6 +111,15 @@ export default function Login() {
           onChange={(e) => setPassword(e.target.value)}
         />
 
+        <button
+          type="button"
+          style={styles.linkButton}
+          onClick={handleForgotPassword}
+          disabled={sendingReset}
+        >
+          {sendingReset ? "Sending reset email..." : "Forgot password?"}
+        </button>
+
         {/* Login button */}
         <button style={styles.button} onClick={handleLogin}>
           Log In
@@ -94,6 +134,8 @@ export default function Login() {
           />
           Continue with Google
         </button>
+
+        {infoMsg && <p style={styles.info}>{infoMsg}</p>}
 
         {/* Error message */}
         {errorMsg && <p style={styles.error}>{errorMsg}</p>}
@@ -133,6 +175,17 @@ const styles = {
     border: "1px solid #d0d7e2",
     fontSize: "16px",
   },
+  linkButton: {
+    padding: 0,
+    marginTop: "6px",
+    marginLeft: "auto",
+    display: "block",
+    background: "transparent",
+    border: "none",
+    color: "#2d57ff",
+    fontSize: "14px",
+    cursor: "pointer",
+  },
   button: {
     width: "100%",
     padding: "14px 16px",
@@ -166,6 +219,11 @@ const styles = {
   googleIcon: {
     width: "20px",
     height: "20px",
+  },
+  info: {
+    marginTop: "12px",
+    color: "#2563eb",
+    fontSize: "14px",
   },
   error: {
     marginTop: "12px",

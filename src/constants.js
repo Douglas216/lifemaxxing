@@ -26,3 +26,32 @@ export const ADMIN_EMAILS = [
   'douglasj216@outlook.com',
   'wangxr1218@gmail.com'
 ];
+
+export const isAuthorizedEmail = (email) => {
+  if (!email) {
+    return false;
+  }
+
+  const normalizedEmail = email.toLowerCase().trim();
+  return ADMIN_EMAILS.some((allowedEmail) => allowedEmail.toLowerCase().trim() === normalizedEmail);
+};
+
+export const DOUGLAS_UID = 'WgCYHSWWZkRds1CpMaZkp0VEEEv1';
+export const NANCY_UID = 'rjjpaW7VGOZ52yrNTsdW2bxKDQ62';
+
+export const COUPLE_ACCOUNT_UIDS = [DOUGLAS_UID, NANCY_UID];
+
+const COUPLE_DISPLAY_NAMES = {
+  [DOUGLAS_UID]: 'Douglas',
+  [NANCY_UID]: 'Nancy'
+};
+
+export const isCoupleAccountByUid = (uid) => COUPLE_ACCOUNT_UIDS.includes(uid);
+
+export const getPartnerUid = (uid) => {
+  if (uid === DOUGLAS_UID) return NANCY_UID;
+  if (uid === NANCY_UID) return DOUGLAS_UID;
+  return null;
+};
+
+export const getDisplayNameForUid = (uid) => COUPLE_DISPLAY_NAMES[uid] || 'Partner';

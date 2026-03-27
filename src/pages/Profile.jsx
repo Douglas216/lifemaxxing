@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ADMIN_EMAILS } from '../constants';
+import { isAuthorizedEmail } from '../constants';
 import {
   collection,
   doc,
@@ -74,13 +74,7 @@ const Profile = () => {
   const [heatmapData, setHeatmapData] = useState([]);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState('');
-  /* Robust authorization check */
-  const isAuthorized = useMemo(() => {
-    if (!user || !user.email) return false;
-    // Hardcode fallback just in case constant is empty
-    const normalizedEmail = user.email.toLowerCase().trim();
-    return ADMIN_EMAILS.some(e => e.toLowerCase().trim() === normalizedEmail) || normalizedEmail === 'douglasj216@outlook.com';
-  }, [user]);
+  const isAuthorized = useMemo(() => isAuthorizedEmail(user?.email), [user]);
 
   const profileDocRef = useMemo(() => {
     if (!user) {

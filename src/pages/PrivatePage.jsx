@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { ADMIN_EMAILS } from '../constants';
+import { isAuthorizedEmail } from '../constants';
 import NancyNavbar from '../components/NancyNavbar';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -237,7 +237,7 @@ const PrivatePage = () => {
         return <Navigate to="/login" replace />;
     }
 
-    const isAuthorized = ADMIN_EMAILS.includes(user.email);
+    const isAuthorized = isAuthorizedEmail(user.email);
 
     if (!isAuthorized) {
         return (
